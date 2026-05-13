@@ -1,16 +1,55 @@
-import { Head } from '@inertiajs/react';
+import { Head, Link as InertiaLink, usePage } from '@inertiajs/react';
 import {
-    type ChangeEvent,
-    type Dispatch,
-    type SetStateAction,
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-} from 'react';
-import '../../css/poker.css';
-import { Icon } from '@/components/poker/icon';
+    ArrowRight,
+    Check,
+    ChevronDown,
+    Copy,
+    Crown,
+    FileUp,
+    Link as LinkIcon,
+    Mail,
+    Pause,
+    Play,
+    Plus,
+    QrCode,
+    RotateCcw,
+    Sparkles,
+    Trash2,
+    Users,
+    WandSparkles,
+} from 'lucide-react';
+import type { ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from '@/components/ui/card';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import { dashboard, login, register } from '@/routes';
 
 const FIB = ['0', '1', '2', '3', '5', '8', '13', '21', '?', '☕'] as const;
 type CardValue = (typeof FIB)[number];
@@ -44,49 +83,54 @@ interface Consensus {
 }
 
 const INITIAL_PLAYERS: Player[] = [
-    { id: 'p1', name: 'Olivier', color: 'oklch(0.78 0.13 230)', host: true },
-    { id: 'p2', name: 'Tim', color: 'oklch(0.78 0.13 160)' },
-    { id: 'p3', name: 'Sanne', color: 'oklch(0.82 0.14 75)' },
-    { id: 'p4', name: 'Maya', color: 'oklch(0.74 0.16 295)' },
-    { id: 'p5', name: 'Russell', color: 'oklch(0.78 0.13 230)', you: true },
+    { id: 'p1', name: 'Olivier', color: 'bg-sky-500', host: true },
+    { id: 'p2', name: 'Tim', color: 'bg-emerald-500' },
+    { id: 'p3', name: 'Sanne', color: 'bg-amber-500' },
+    { id: 'p4', name: 'Maya', color: 'bg-violet-500' },
+    { id: 'p5', name: 'Russell', color: 'bg-sky-500', you: true },
 ];
 
-function fmtTime(s: number) {
-    const m = Math.floor(s / 60)
+function fmtTime(seconds: number): string {
+    const minutes = Math.floor(seconds / 60)
         .toString()
         .padStart(2, '0');
-    const ss = (s % 60).toString().padStart(2, '0');
-    return `${m}:${ss}`;
+    const rest = (seconds % 60).toString().padStart(2, '0');
+
+    return `${minutes}:${rest}`;
 }
 
 function parseCsvLine(line: string): string[] {
     const fields: string[] = [];
-    let cur = '';
+    let current = '';
     let inQuote = false;
-    for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
+
+    for (let index = 0; index < line.length; index++) {
+        const character = line[index];
+
         if (inQuote) {
-            if (ch === '"') {
-                if (line[i + 1] === '"') {
-                    cur += '"';
-                    i++;
+            if (character === '"') {
+                if (line[index + 1] === '"') {
+                    current += '"';
+                    index++;
                 } else {
                     inQuote = false;
                 }
             } else {
-                cur += ch;
+                current += character;
             }
-        } else if (ch === '"') {
+        } else if (character === '"') {
             inQuote = true;
-        } else if (ch === ',' || ch === ';') {
-            fields.push(cur);
-            cur = '';
+        } else if (character === ',' || character === ';') {
+            fields.push(current);
+            current = '';
         } else {
-            cur += ch;
+            current += character;
         }
     }
-    fields.push(cur);
-    return fields.map((f) => f.trim());
+
+    fields.push(current);
+
+    return fields.map((field) => field.trim());
 }
 
 const TITLE_HEADERS = ['title', 'name', 'summary', 'subject', 'titel'];
@@ -94,163 +138,240 @@ const KEY_HEADER_ORDER = ['iid', 'key', 'number', 'id'];
 
 function parseCsv(text: string): NewStory[] {
     const rawLines = text.split(/\r?\n/);
-    // Re-join lines that were split inside a quoted field
     const lines: string[] = [];
-    let buf = '';
+    let buffer = '';
     let openQuotes = 0;
+
     for (const raw of rawLines) {
-        buf = buf ? `${buf}\n${raw}` : raw;
+        buffer = buffer ? `${buffer}\n${raw}` : raw;
         openQuotes += (raw.match(/"/g) || []).length;
+
         if (openQuotes % 2 === 0) {
-            if (buf.trim()) lines.push(buf);
-            buf = '';
+            if (buffer.trim()) {
+                lines.push(buffer);
+            }
+
+            buffer = '';
             openQuotes = 0;
         }
     }
-    if (buf.trim()) lines.push(buf);
-    if (!lines.length) return [];
 
-    const headerFields = parseCsvLine(lines[0]).map((f) => f.toLowerCase());
-    const titleIdx = headerFields.findIndex((h) => TITLE_HEADERS.includes(h));
+    if (buffer.trim()) {
+        lines.push(buffer);
+    }
 
-    if (titleIdx >= 0) {
-        let keyIdx = -1;
-        for (const cand of KEY_HEADER_ORDER) {
-            const found = headerFields.indexOf(cand);
+    if (!lines.length) {
+        return [];
+    }
+
+    const headerFields = parseCsvLine(lines[0]).map((field) =>
+        field.toLowerCase(),
+    );
+    const titleIndex = headerFields.findIndex((header) =>
+        TITLE_HEADERS.includes(header),
+    );
+
+    if (titleIndex >= 0) {
+        let keyIndex = -1;
+
+        for (const candidate of KEY_HEADER_ORDER) {
+            const found = headerFields.indexOf(candidate);
+
             if (found >= 0) {
-                keyIdx = found;
+                keyIndex = found;
                 break;
             }
         }
+
         return lines
             .slice(1)
             .map<NewStory>((line) => {
                 const fields = parseCsvLine(line);
-                const title = fields[titleIdx] || '';
-                const rawKey = keyIdx >= 0 ? fields[keyIdx] : '';
-                let key: string | null = null;
-                if (rawKey) {
-                    key = /^\d+$/.test(rawKey) ? `#${rawKey}` : rawKey;
-                }
+                const title = fields[titleIndex] || '';
+                const rawKey = keyIndex >= 0 ? fields[keyIndex] : '';
+                const key = rawKey
+                    ? /^\d+$/.test(rawKey)
+                        ? `#${rawKey}`
+                        : rawKey
+                    : null;
+
                 return { key, title };
             })
-            .filter((s) => s.title);
+            .filter((story) => story.title);
     }
 
-    // No header — fall back to single-line heuristics
     return lines
         .map<NewStory>((line) => {
-            const m = line.match(/^([A-Z]{2,}-\d+)[,;\s]+(.+)$/);
-            if (m) {
+            const match = line.match(/^([A-Z]{2,}-\d+)[,;\s]+(.+)$/);
+
+            if (match) {
                 return {
-                    key: m[1],
-                    title: m[2].replace(/^["']|["']$/g, '').trim(),
+                    key: match[1],
+                    title: match[2].replace(/^["']|["']$/g, '').trim(),
                 };
             }
+
             const fields = parseCsvLine(line);
             const title = (fields[0] || '').replace(/^["']|["']$/g, '');
+
             return { key: null, title };
         })
-        .filter((s) => s.title);
+        .filter((story) => story.title);
 }
 
 type Phase = 'setup' | 'playing';
 type PlayStage = 'intro' | 'voting' | 'flipping' | 'revealed';
 
 export default function PokerPage() {
+    const { auth } = usePage().props;
     const [phase, setPhase] = useState<Phase>('setup');
     const [stories, setStories] = useState<Story[]>([]);
-    const [activeIdx, setActiveIdx] = useState(0);
-    const activeStory = stories[activeIdx];
+    const [activeIndex, setActiveIndex] = useState(0);
+    const activeStory = stories[activeIndex];
 
     const [players] = useState<Player[]>(INITIAL_PLAYERS);
-    const me = players.find((p) => p.you)!;
+    const me = players.find((player) => player.you) ?? players[0];
 
-    const [votes, setVotes] = useState<Record<string, CardValue | undefined>>({});
+    const [votes, setVotes] = useState<Record<string, CardValue | undefined>>(
+        {},
+    );
     const [playStage, setPlayStage] = useState<PlayStage>('intro');
     const revealed = playStage === 'revealed';
     const flipping = playStage === 'flipping' || playStage === 'revealed';
     const myVote = votes[me.id];
 
     const [timerRunning, setTimerRunning] = useState(false);
-    const [timerSec, setTimerSec] = useState(0);
+    const [timerSeconds, setTimerSeconds] = useState(0);
+    const [playersOpen, setPlayersOpen] = useState(false);
+    const [inviteOpen, setInviteOpen] = useState(false);
+    const [copied, setCopied] = useState(false);
+
     useEffect(() => {
-        if (!timerRunning) return;
-        const id = setInterval(() => setTimerSec((s) => s + 1), 1000);
-        return () => clearInterval(id);
+        if (!timerRunning) {
+            return;
+        }
+
+        const id = window.setInterval(
+            () => setTimerSeconds((seconds) => seconds + 1),
+            1000,
+        );
+
+        return () => window.clearInterval(id);
     }, [timerRunning]);
 
     useEffect(() => {
-        if (phase !== 'playing' || playStage !== 'voting') return;
-        if (!myVote) return;
-        const others = players.filter((p) => !p.you);
+        if (phase !== 'playing' || playStage !== 'voting' || !myVote) {
+            return;
+        }
+
         const seedFor = (): CardValue => {
-            const yourNum = parseFloat(myVote);
-            if (isNaN(yourNum)) {
-                return String(FIB_NUMS[Math.floor(Math.random() * 5) + 1]) as CardValue;
+            const yourNumber = Number.parseFloat(myVote);
+
+            if (Number.isNaN(yourNumber)) {
+                return String(
+                    FIB_NUMS[Math.floor(Math.random() * 5) + 1],
+                ) as CardValue;
             }
+
             const drift = [-1, 0, 0, 1, 2][Math.floor(Math.random() * 5)];
-            const target = yourNum + drift;
-            const closest = FIB_NUMS.reduce(
-                (p, c) => (Math.abs(c - target) < Math.abs(p - target) ? c : p),
-                100,
+            const target = yourNumber + drift;
+            const closest = FIB_NUMS.reduce((previous, current) =>
+                Math.abs(current - target) < Math.abs(previous - target)
+                    ? current
+                    : previous,
             );
+
             return String(closest) as CardValue;
         };
-        const timers = others.map((p, i) => {
-            if (votes[p.id]) return null;
-            return setTimeout(
-                () =>
-                    setVotes((v) => ({ ...v, [p.id]: seedFor() })),
-                600 + i * 700 + Math.random() * 400,
-            );
-        });
+
+        const timers = players
+            .filter((player) => !player.you)
+            .map((player, index) => {
+                if (votes[player.id]) {
+                    return null;
+                }
+
+                return window.setTimeout(
+                    () =>
+                        setVotes((currentVotes) => ({
+                            ...currentVotes,
+                            [player.id]: seedFor(),
+                        })),
+                    600 + index * 700 + Math.random() * 400,
+                );
+            });
+
         return () => {
-            timers.forEach((tm) => {
-                if (tm) clearTimeout(tm);
+            timers.forEach((timer) => {
+                if (timer) {
+                    window.clearTimeout(timer);
+                }
             });
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [myVote, phase, playStage]);
 
-    const votedCount = players.filter((p) => votes[p.id] != null).length;
+    const votedCount = players.filter(
+        (player) => votes[player.id] != null,
+    ).length;
     const totalVoters = players.length;
+    const allDone = stories.length > 0 && stories.every((story) => story.done);
+    const doneCount = stories.filter((story) => story.done).length;
 
-    const castVote = (val: CardValue) => {
-        if (playStage !== 'voting') return;
-        setVotes((v) => ({ ...v, [me.id]: v[me.id] === val ? undefined : val }));
-        if (!timerRunning) setTimerRunning(true);
+    const castVote = (value: CardValue): void => {
+        if (playStage !== 'voting') {
+            return;
+        }
+
+        setVotes((currentVotes) => ({
+            ...currentVotes,
+            [me.id]: currentVotes[me.id] === value ? undefined : value,
+        }));
+
+        if (!timerRunning) {
+            setTimerRunning(true);
+        }
     };
 
-    const handleReveal = () => {
-        if (votedCount === 0) return;
+    const handleReveal = (): void => {
+        if (votedCount === 0) {
+            return;
+        }
+
         setTimerRunning(false);
         setPlayStage('flipping');
-        setTimeout(() => setPlayStage('revealed'), 650);
+        window.setTimeout(() => setPlayStage('revealed'), 650);
     };
 
-    const handleStartVoting = () => setPlayStage('voting');
-
-    const handleRevote = useCallback(() => {
+    const handleRevote = useCallback((): void => {
         setPlayStage('voting');
         setVotes({});
-        setTimerSec(0);
+        setTimerSeconds(0);
         setTimerRunning(false);
     }, []);
 
-    const handleAccept = (estimate: number | null) => {
-        setStories((prev) =>
-            prev.map((s, i) => (i === activeIdx ? { ...s, estimate, done: true } : s)),
+    const handleAccept = (estimate: number | null): void => {
+        setStories((currentStories) =>
+            currentStories.map((story, index) =>
+                index === activeIndex
+                    ? { ...story, estimate, done: true }
+                    : story,
+            ),
         );
-        const nextIdx = stories.findIndex((s, i) => i > activeIdx && !s.done);
+
+        const nextIndex = stories.findIndex(
+            (story, index) => index > activeIndex && !story.done,
+        );
+
         setVotes({});
-        setTimerSec(0);
+        setTimerSeconds(0);
         setTimerRunning(false);
-        if (nextIdx >= 0) {
-            setActiveIdx(nextIdx);
+
+        if (nextIndex >= 0) {
+            setActiveIndex(nextIndex);
             setPlayStage('intro');
         } else {
-            setActiveIdx(stories.length);
+            setActiveIndex(stories.length);
             setPlayStage('intro');
         }
     };
@@ -258,300 +379,304 @@ export default function PokerPage() {
     const numericVotes = useMemo(
         () =>
             Object.values(votes)
-                .filter((v): v is CardValue => v != null && !isNaN(parseFloat(v)))
-                .map((v) => parseFloat(v)),
+                .filter(
+                    (vote): vote is CardValue =>
+                        vote != null && !Number.isNaN(Number.parseFloat(vote)),
+                )
+                .map((vote) => Number.parseFloat(vote)),
         [votes],
     );
-    const avg = numericVotes.length
-        ? numericVotes.reduce((a, b) => a + b, 0) / numericVotes.length
+    const average = numericVotes.length
+        ? numericVotes.reduce((total, vote) => total + vote, 0) /
+          numericVotes.length
         : 0;
-    const avgFmt = numericVotes.length ? avg.toFixed(1) : '—';
+    const averageFormatted = numericVotes.length ? average.toFixed(1) : '-';
     const suggested = numericVotes.length
-        ? FIB_NUMS.reduce(
-              (p, c) => (Math.abs(c - avg) < Math.abs(p - avg) ? c : p),
-              100,
+        ? FIB_NUMS.reduce((previous, current) =>
+              Math.abs(current - average) < Math.abs(previous - average)
+                  ? current
+                  : previous,
           )
         : null;
 
-    const dist = useMemo(() => {
-        const d: Record<string, number> = {};
-        FIB.forEach((v) => (d[v] = 0));
-        Object.values(votes).forEach((v) => {
-            if (v != null) d[v] = (d[v] || 0) + 1;
+    const distribution = useMemo(() => {
+        const result: Record<string, number> = {};
+        FIB.forEach((value) => {
+            result[value] = 0;
         });
-        return d;
+        Object.values(votes).forEach((vote) => {
+            if (vote != null) {
+                result[vote] = (result[vote] || 0) + 1;
+            }
+        });
+
+        return result;
     }, [votes]);
-    const maxDist = Math.max(1, ...Object.values(dist));
+    const maxDistribution = Math.max(1, ...Object.values(distribution));
 
     const consensus: Consensus = useMemo(() => {
-        if (!numericVotes.length) return { pct: 0, label: '—', emoji: '🤔' };
+        if (!numericVotes.length) {
+            return { pct: 0, label: '-', emoji: '🤔' };
+        }
+
         const range = Math.max(...numericVotes) - Math.min(...numericVotes);
         const pct = Math.max(0, Math.min(1, 1 - range / 13));
-        let label = 'Geen consensus';
-        let emoji = '😬';
+
         if (pct >= 0.95) {
-            label = 'Perfect!';
-            emoji = '🎯';
-        } else if (pct >= 0.75) {
-            label = 'Sterk akkoord';
-            emoji = '🙌';
-        } else if (pct >= 0.5) {
-            label = 'Redelijk';
-            emoji = '👍';
-        } else if (pct >= 0.25) {
-            label = 'Discussie';
-            emoji = '🤔';
+            return { pct, label: 'Perfect', emoji: '🎯' };
         }
-        return { pct, label, emoji };
+
+        if (pct >= 0.75) {
+            return { pct, label: 'Sterk akkoord', emoji: '🙌' };
+        }
+
+        if (pct >= 0.5) {
+            return { pct, label: 'Redelijk', emoji: '👍' };
+        }
+
+        if (pct >= 0.25) {
+            return { pct, label: 'Discussie', emoji: '🤔' };
+        }
+
+        return { pct, label: 'Geen consensus', emoji: '😬' };
     }, [numericVotes]);
 
-    const [playersOpen, setPlayersOpen] = useState(false);
-    const [inviteOpen, setInviteOpen] = useState(false);
-    const [copied, setCopied] = useState(false);
-
-    const handleAddStories = useCallback((newOnes: NewStory[]) => {
-        setStories((prev) => {
-            const startIdx = prev.length;
-            const padded: Story[] = newOnes.map((s, i) => ({
+    const handleAddStories = useCallback((newStories: NewStory[]) => {
+        setStories((currentStories) => {
+            const startIndex = currentStories.length;
+            const padded = newStories.map<Story>((story, index) => ({
                 key:
-                    s.key ||
-                    `POK-${String(101 + startIdx + i).padStart(3, '0')}`,
-                title: s.title,
+                    story.key ||
+                    `POK-${String(101 + startIndex + index).padStart(3, '0')}`,
+                title: story.title,
                 estimate: null,
                 done: false,
             }));
-            return [...prev, ...padded];
+
+            return [...currentStories, ...padded];
         });
     }, []);
 
-    const handleStart = () => {
-        if (!stories.length) return;
-        const firstUndone = stories.findIndex((s) => !s.done);
-        setActiveIdx(firstUndone >= 0 ? firstUndone : 0);
+    const handleStart = (): void => {
+        if (!stories.length) {
+            return;
+        }
+
+        const firstUndone = stories.findIndex((story) => !story.done);
+        setActiveIndex(firstUndone >= 0 ? firstUndone : 0);
         setPlayStage('intro');
         setPhase('playing');
     };
 
-    const handleBackToSetup = () => {
+    const handleBackToSetup = (): void => {
         setPhase('setup');
         handleRevote();
     };
 
-    const allDone = stories.length > 0 && stories.every((s) => s.done);
-    const doneCount = stories.filter((s) => s.done).length;
-
     return (
         <>
-            <Head title="Planning Poker">
-                <link rel="preconnect" href="https://fonts.googleapis.com" />
-                <link
-                    rel="preconnect"
-                    href="https://fonts.gstatic.com"
-                    crossOrigin=""
-                />
-                <link
-                    href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;600;700&display=swap"
-                    rel="stylesheet"
-                />
-            </Head>
-            <div className="poker-app">
-                <div className="app">
-                    <header className="topbar">
-                        <div className="brand">
-                            <div className="brand-mark">
-                                <svg
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="currentColor"
-                                >
-                                    <path d="M12 2 L4 12 L9 12 L9 22 L15 22 L15 12 L20 12 Z" />
-                                </svg>
+            <Head title="Planning Poker" />
+
+            <div className="min-h-svh bg-background text-foreground">
+                <div className="mx-auto flex min-h-svh w-full max-w-[1500px] flex-col gap-4 p-3 sm:p-4 lg:p-6">
+                    <header className="flex min-h-14 flex-wrap items-center gap-3 rounded-lg border bg-card px-3 shadow-sm sm:px-4">
+                        <div className="flex items-center gap-3">
+                            <div className="flex size-9 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs">
+                                <Sparkles className="size-4" />
                             </div>
-                            <button className="room-name" type="button">
-                                <span>Sprint 42 — Grooming</span>
-                                <Icon
-                                    name="chevronDown"
-                                    size={14}
-                                    className="chev"
-                                />
-                            </button>
-                        </div>
-                        <div className="spacer" />
-
-                        {phase === 'playing' && (
-                            <div
-                                className={`timer-chip ${timerRunning ? 'running' : ''}`}
-                                onClick={() => setTimerRunning((r) => !r)}
-                                role="button"
-                                tabIndex={0}
-                                style={{ cursor: 'pointer' }}
-                            >
-                                <span className="dot" />
-                                <span>{fmtTime(timerSec)}</span>
-                                <Icon
-                                    name={timerRunning ? 'pause' : 'play'}
-                                    size={12}
-                                />
-                            </div>
-                        )}
-
-                        <PlayersDropdown
-                            open={playersOpen}
-                            setOpen={setPlayersOpen}
-                            players={players}
-                            votes={votes}
-                            revealed={revealed}
-                            phase={phase}
-                        />
-
-                        <button
-                            className="invite-btn"
-                            type="button"
-                            onClick={() => setInviteOpen(true)}
-                        >
-                            <Icon name="invite" size={16} />
-                            <span>Uitnodigen</span>
-                        </button>
-                    </header>
-
-                    <aside className="sidebar">
-                        <div className="sidebar-head">
-                            <h3>Backlog</h3>
-                            <span className="story-counter">
-                                {stories.length
-                                    ? `${stories.filter((s) => !s.done).length} open`
-                                    : 'leeg'}
-                            </span>
-                        </div>
-                        <div className="story-list">
-                            {stories.length === 0 && (
-                                <div
-                                    style={{
-                                        padding: '20px 12px',
-                                        color: 'var(--ink-3)',
-                                        fontSize: 13,
-                                        lineHeight: 1.5,
-                                        textAlign: 'center',
-                                    }}
-                                >
-                                    Voeg items toe om te beginnen.
-                                </div>
-                            )}
-                            {stories.map((s, i) => (
-                                <button
-                                    type="button"
-                                    key={s.key}
-                                    className={`story-item ${
-                                        phase === 'playing' && i === activeIdx
-                                            ? 'active '
-                                            : ''
-                                    }${s.done ? 'done' : ''}`}
-                                    onClick={() => {
-                                        if (phase === 'playing') {
-                                            setActiveIdx(i);
-                                            handleRevote();
-                                        }
-                                    }}
-                                >
-                                    <div className="story-status">
-                                        {s.done && (
-                                            <Icon name="check" size={11} />
-                                        )}
-                                    </div>
-                                    <div className="story-body">
-                                        <span className="story-key">{s.key}</span>
-                                        <div className="story-title">
-                                            {s.title}
-                                        </div>
-                                    </div>
-                                    <div
-                                        className={`story-estimate ${
-                                            s.estimate != null ? 'has' : ''
-                                        }`}
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        className="h-auto gap-2 px-2 py-1.5 text-left"
                                     >
-                                        {s.estimate != null ? s.estimate : '—'}
-                                    </div>
-                                </button>
-                            ))}
+                                        <span className="flex flex-col">
+                                            <span className="text-sm leading-none font-semibold">
+                                                Sprint 42 - Grooming
+                                            </span>
+                                            <span className="mt-1 text-xs font-normal text-muted-foreground">
+                                                Planning Poker
+                                            </span>
+                                        </span>
+                                        <ChevronDown className="size-4 text-muted-foreground" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                    align="start"
+                                    className="w-56"
+                                >
+                                    <DropdownMenuLabel>
+                                        Ruimte
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem>
+                                        Sprint 42 - Grooming
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem>
+                                        Mobiele backlog
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem>
+                                        Nieuwe ruimte maken
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
                         </div>
-                        {phase === 'playing' && (
-                            <button
-                                type="button"
-                                className="add-story"
-                                onClick={handleBackToSetup}
-                            >
-                                <Icon name="plus" size={14} />
-                                <span>Items beheren</span>
-                            </button>
-                        )}
-                    </aside>
 
-                    <main className="stage stage-full">
-                        {phase === 'setup' ? (
-                            <SetupView
-                                stories={stories}
-                                onAdd={handleAddStories}
-                                onRemove={(i) =>
-                                    setStories((prev) =>
-                                        prev.filter((_, ix) => ix !== i),
-                                    )
-                                }
-                                onStart={handleStart}
-                            />
-                        ) : allDone ? (
-                            <CompleteView
-                                stories={stories}
-                                onRestart={handleBackToSetup}
-                            />
-                        ) : (
-                            <PlayingView
-                                activeStory={activeStory}
+                        <div className="ml-auto flex flex-wrap items-center gap-2">
+                            {phase === 'playing' && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    type="button"
+                                    onClick={() =>
+                                        setTimerRunning((running) => !running)
+                                    }
+                                    className={cn(
+                                        'font-mono',
+                                        timerRunning &&
+                                            'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+                                    )}
+                                >
+                                    <span
+                                        className={cn(
+                                            'size-2 rounded-full bg-muted-foreground',
+                                            timerRunning &&
+                                                'bg-emerald-500 ring-4 ring-emerald-500/15',
+                                        )}
+                                    />
+                                    {fmtTime(timerSeconds)}
+                                    {timerRunning ? (
+                                        <Pause className="size-3.5" />
+                                    ) : (
+                                        <Play className="size-3.5" />
+                                    )}
+                                </Button>
+                            )}
+
+                            <PlayersDropdown
+                                open={playersOpen}
+                                setOpen={setPlayersOpen}
                                 players={players}
                                 votes={votes}
-                                playStage={playStage}
-                                handleStartVoting={handleStartVoting}
                                 revealed={revealed}
-                                flipping={flipping}
-                                myVote={myVote}
-                                me={me}
-                                castVote={castVote}
-                                handleReveal={handleReveal}
-                                handleRevote={handleRevote}
-                                handleAccept={handleAccept}
-                                votedCount={votedCount}
-                                totalVoters={totalVoters}
-                                avgFmt={avgFmt}
-                                suggested={suggested}
-                                dist={dist}
-                                maxDist={maxDist}
-                                consensus={consensus}
-                                activeIdx={activeIdx}
-                                totalStories={stories.length}
-                                doneCount={doneCount}
+                                phase={phase}
                             />
-                        )}
-                    </main>
 
-                    {inviteOpen && (
-                        <InviteModal
-                            onClose={() => setInviteOpen(false)}
-                            copied={copied}
-                            setCopied={setCopied}
+                            <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => setInviteOpen(true)}
+                            >
+                                <Users className="size-4" />
+                                Uitnodigen
+                            </Button>
+
+                            {auth.user ? (
+                                <Button asChild variant="outline" size="sm">
+                                    <InertiaLink href={dashboard()}>
+                                        Dashboard
+                                    </InertiaLink>
+                                </Button>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <Button asChild variant="ghost" size="sm">
+                                        <InertiaLink href={login()}>
+                                            Inloggen
+                                        </InertiaLink>
+                                    </Button>
+                                    <Button asChild variant="outline" size="sm">
+                                        <InertiaLink href={register()}>
+                                            Registreren
+                                        </InertiaLink>
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    </header>
+
+                    <div className="grid flex-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+                        <StorySidebar
+                            stories={stories}
+                            phase={phase}
+                            activeIndex={activeIndex}
+                            onSelect={(index) => {
+                                if (phase === 'playing') {
+                                    setActiveIndex(index);
+                                    handleRevote();
+                                }
+                            }}
+                            onManage={handleBackToSetup}
                         />
-                    )}
+
+                        <main className="min-h-[720px] rounded-lg border bg-muted/30 p-3 sm:p-4">
+                            {phase === 'setup' ? (
+                                <SetupView
+                                    stories={stories}
+                                    onAdd={handleAddStories}
+                                    onRemove={(index) =>
+                                        setStories((currentStories) =>
+                                            currentStories.filter(
+                                                (_, storyIndex) =>
+                                                    storyIndex !== index,
+                                            ),
+                                        )
+                                    }
+                                    onStart={handleStart}
+                                />
+                            ) : allDone ? (
+                                <CompleteView
+                                    stories={stories}
+                                    onRestart={handleBackToSetup}
+                                />
+                            ) : (
+                                activeStory && (
+                                    <PlayingView
+                                        activeStory={activeStory}
+                                        players={players}
+                                        votes={votes}
+                                        playStage={playStage}
+                                        handleStartVoting={() =>
+                                            setPlayStage('voting')
+                                        }
+                                        revealed={revealed}
+                                        flipping={flipping}
+                                        myVote={myVote}
+                                        me={me}
+                                        castVote={castVote}
+                                        handleReveal={handleReveal}
+                                        handleRevote={handleRevote}
+                                        handleAccept={handleAccept}
+                                        votedCount={votedCount}
+                                        totalVoters={totalVoters}
+                                        averageFormatted={averageFormatted}
+                                        suggested={suggested}
+                                        distribution={distribution}
+                                        maxDistribution={maxDistribution}
+                                        consensus={consensus}
+                                        activeIndex={activeIndex}
+                                        totalStories={stories.length}
+                                        doneCount={doneCount}
+                                    />
+                                )
+                            )}
+                        </main>
+                    </div>
                 </div>
             </div>
+
+            <InviteModal
+                open={inviteOpen}
+                onOpenChange={setInviteOpen}
+                copied={copied}
+                setCopied={setCopied}
+            />
         </>
     );
 }
 
-PokerPage.layout = null;
-
-/* ─── Players dropdown ─────────────────────────────────────────── */
 interface PlayersDropdownProps {
     open: boolean;
-    setOpen: Dispatch<SetStateAction<boolean>>;
+    setOpen: (open: boolean) => void;
     players: Player[];
     votes: Record<string, CardValue | undefined>;
     revealed: boolean;
@@ -566,312 +691,410 @@ function PlayersDropdown({
     revealed,
     phase,
 }: PlayersDropdownProps) {
-    const ref = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        if (!open) return;
-        const onClick = (e: MouseEvent) => {
-            if (!ref.current?.contains(e.target as Node)) setOpen(false);
-        };
-        document.addEventListener('mousedown', onClick);
-        return () => document.removeEventListener('mousedown', onClick);
-    }, [open, setOpen]);
-    const votedCount = players.filter((p) => votes[p.id] != null).length;
+    const votedCount = players.filter(
+        (player) => votes[player.id] != null,
+    ).length;
+
     return (
-        <div className="dropdown-host" ref={ref}>
-            <button
-                type="button"
-                className={`players-btn ${open ? 'open' : ''}`}
-                onClick={() => setOpen((o) => !o)}
-            >
-                <div className="avatar-stack">
-                    {players.slice(0, 3).map((p) => (
-                        <div
-                            className="avatar xs"
-                            key={p.id}
-                            style={{ background: p.color }}
-                        >
-                            {p.name[0]}
-                        </div>
-                    ))}
-                </div>
-                <span className="players-btn-text">
-                    Spelers <b>{players.length}</b>
-                    {phase === 'playing' && !revealed && (
-                        <span className="vote-counter">
-                            {' '}
-                            · {votedCount}/{players.length}
-                        </span>
-                    )}
-                </span>
-                <Icon name="chevronDown" size={14} />
-            </button>
-            {open && (
-                <div className="dropdown-panel">
-                    <div className="dropdown-head">
-                        <span>Aan tafel</span>
-                        <span
-                            style={{
-                                color: 'var(--ink-3)',
-                                fontWeight: 500,
-                                fontSize: 11,
-                            }}
-                        >
-                            {players.length} online
-                        </span>
-                    </div>
-                    <div className="players-list">
-                        {players.map((p) => (
-                            <div className="player-row" key={p.id}>
-                                <div
-                                    className="avatar xs"
-                                    style={{ background: p.color }}
-                                >
-                                    {p.name[0]}
-                                </div>
-                                <span className="name">
-                                    {p.name}
-                                    {p.you && (
-                                        <span
-                                            style={{
-                                                color: 'var(--ink-3)',
-                                                fontWeight: 400,
-                                            }}
-                                        >
-                                            {' '}
-                                            (jij)
-                                        </span>
-                                    )}
-                                </span>
-                                {p.host && (
-                                    <span title="Host">
-                                        <Icon
-                                            name="crown"
-                                            size={12}
-                                            style={{ color: 'var(--warn)' }}
-                                        />
-                                    </span>
-                                )}
-                                <span className="online-dot" />
-                                <span
-                                    className={`status ${
-                                        phase === 'playing'
-                                            ? revealed
-                                                ? ''
-                                                : votes[p.id]
-                                                  ? 'voted'
-                                                  : ''
-                                            : 'observer'
-                                    }`}
-                                >
-                                    {phase !== 'playing'
-                                        ? 'lobby'
-                                        : revealed
-                                          ? (votes[p.id] ?? '—')
-                                          : votes[p.id]
-                                            ? '✓'
-                                            : 'denkt…'}
-                                </span>
-                            </div>
+        <DropdownMenu open={open} onOpenChange={setOpen}>
+            <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="sm">
+                    <div className="flex -space-x-2">
+                        {players.slice(0, 3).map((player) => (
+                            <PlayerAvatar key={player.id} player={player} />
                         ))}
                     </div>
-                    <div className="dropdown-foot">
-                        <button type="button" className="dropdown-foot-btn">
-                            <Icon name="invite" size={14} />
-                            <span>Speler uitnodigen</span>
-                        </button>
-                    </div>
+                    <span className="hidden sm:inline">
+                        {phase === 'playing'
+                            ? `${votedCount}/${players.length} gestemd`
+                            : `${players.length} spelers`}
+                    </span>
+                    <ChevronDown className="size-4 text-muted-foreground" />
+                </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel className="flex items-center justify-between">
+                    Spelers
+                    <Badge variant="secondary">{players.length} online</Badge>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <div className="space-y-1 p-1">
+                    {players.map((player) => {
+                        const vote = votes[player.id];
+                        const hasVoted = vote != null;
+
+                        return (
+                            <div
+                                key={player.id}
+                                className="flex items-center gap-3 rounded-md px-2 py-2"
+                            >
+                                <PlayerAvatar player={player} />
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 text-sm font-medium">
+                                        <span className="truncate">
+                                            {player.name}
+                                        </span>
+                                        {player.host && (
+                                            <Crown className="size-3.5 text-amber-500" />
+                                        )}
+                                        {player.you && (
+                                            <Badge
+                                                variant="outline"
+                                                className="px-1.5"
+                                            >
+                                                jij
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        {phase === 'setup'
+                                            ? 'Wacht in de ruimte'
+                                            : hasVoted
+                                              ? 'Heeft gestemd'
+                                              : 'Nog geen stem'}
+                                    </div>
+                                </div>
+                                <Badge
+                                    variant={hasVoted ? 'default' : 'outline'}
+                                    className="min-w-10 justify-center"
+                                >
+                                    {revealed && hasVoted
+                                        ? vote
+                                        : hasVoted
+                                          ? '✓'
+                                          : '-'}
+                                </Badge>
+                            </div>
+                        );
+                    })}
                 </div>
-            )}
-        </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                    <Plus className="size-4" />
+                    Speler toevoegen
+                </DropdownMenuItem>
+            </DropdownMenuContent>
+        </DropdownMenu>
     );
 }
 
-/* ─── Setup view ─────────────────────────────────────────── */
+interface StorySidebarProps {
+    stories: Story[];
+    phase: Phase;
+    activeIndex: number;
+    onSelect: (index: number) => void;
+    onManage: () => void;
+}
+
+function StorySidebar({
+    stories,
+    phase,
+    activeIndex,
+    onSelect,
+    onManage,
+}: StorySidebarProps) {
+    const openCount = stories.filter((story) => !story.done).length;
+
+    return (
+        <aside className="flex min-h-[420px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+                <div>
+                    <h2 className="text-sm font-semibold">Backlog</h2>
+                    <p className="text-xs text-muted-foreground">
+                        {stories.length
+                            ? `${openCount} open van ${stories.length}`
+                            : 'Nog leeg'}
+                    </p>
+                </div>
+                <Badge variant={openCount ? 'secondary' : 'outline'}>
+                    {openCount || 0}
+                </Badge>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto p-3">
+                {stories.length === 0 && (
+                    <div className="flex h-full min-h-56 flex-col items-center justify-center rounded-lg border border-dashed p-6 text-center">
+                        <WandSparkles className="mb-3 size-8 text-muted-foreground" />
+                        <p className="text-sm font-medium">
+                            Voeg items toe om te beginnen.
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            Plak backlogregels of importeer een CSV.
+                        </p>
+                    </div>
+                )}
+
+                {stories.map((story, index) => (
+                    <button
+                        type="button"
+                        key={story.key}
+                        className={cn(
+                            'flex w-full items-start gap-3 rounded-md border bg-background p-3 text-left shadow-xs transition hover:bg-accent',
+                            phase === 'playing' &&
+                                index === activeIndex &&
+                                'border-primary bg-primary/5',
+                            story.done && 'opacity-70',
+                        )}
+                        onClick={() => onSelect(index)}
+                    >
+                        <span
+                            className={cn(
+                                'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border text-[10px]',
+                                story.done
+                                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                                    : 'border-muted-foreground/30',
+                            )}
+                        >
+                            {story.done && <Check className="size-3" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-medium text-muted-foreground">
+                                {story.key}
+                            </span>
+                            <span className="line-clamp-2 text-sm font-medium">
+                                {story.title}
+                            </span>
+                        </span>
+                        <Badge
+                            variant={
+                                story.estimate != null ? 'default' : 'outline'
+                            }
+                            className="min-w-9 justify-center"
+                        >
+                            {story.estimate ?? '-'}
+                        </Badge>
+                    </button>
+                ))}
+            </div>
+
+            {phase === 'playing' && (
+                <div className="border-t p-3">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        onClick={onManage}
+                    >
+                        <Plus className="size-4" />
+                        Items beheren
+                    </Button>
+                </div>
+            )}
+        </aside>
+    );
+}
+
 interface SetupViewProps {
     stories: Story[];
-    onAdd: (items: NewStory[]) => void;
-    onRemove: (i: number) => void;
+    onAdd: (stories: NewStory[]) => void;
+    onRemove: (index: number) => void;
     onStart: () => void;
 }
 
 function SetupView({ stories, onAdd, onRemove, onStart }: SetupViewProps) {
-    const [draft, setDraft] = useState('');
-    const fileRef = useRef<HTMLInputElement>(null);
+    const [text, setText] = useState('');
+    const [fileName, setFileName] = useState<string | null>(null);
 
-    const submitDraft = () => {
-        const items: NewStory[] = draft
-            .split(/\n/)
-            .map((l) => l.trim())
+    const handleTextAdd = (): void => {
+        const rows = text
+            .split(/\r?\n/)
+            .map((line) => line.trim())
             .filter(Boolean)
-            .map((title) => ({ title }));
-        if (!items.length) return;
-        onAdd(items);
-        setDraft('');
+            .map<NewStory>((line) => {
+                const match = line.match(/^([A-Z]{2,}-\d+)\s+(.+)$/);
+
+                if (match) {
+                    return { key: match[1], title: match[2] };
+                }
+
+                return { title: line };
+            });
+
+        if (rows.length) {
+            onAdd(rows);
+            setText('');
+        }
     };
 
-    const onFile = (e: ChangeEvent<HTMLInputElement>) => {
-        const f = e.target.files?.[0];
-        if (!f) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            const parsed = parseCsv(String(reader.result));
-            if (parsed.length) onAdd(parsed);
-        };
-        reader.readAsText(f);
-        e.target.value = '';
+    const handleFile = async (
+        event: ChangeEvent<HTMLInputElement>,
+    ): Promise<void> => {
+        const file = event.target.files?.[0];
+
+        if (!file) {
+            return;
+        }
+
+        setFileName(file.name);
+        const csv = await file.text();
+        const parsed = parseCsv(csv);
+
+        if (parsed.length) {
+            onAdd(parsed);
+        }
+
+        event.target.value = '';
     };
 
     return (
-        <div className="setup-wrap">
-            <div className="setup-head">
-                <span className="step-chip">Stap 1 van 2</span>
-                <h1>Welke items ga je vandaag inschatten?</h1>
-                <p>
-                    Voeg items toe om de sessie te starten. Eén per regel, of
-                    importeer een CSV.
+        <div className="mx-auto flex h-full max-w-5xl flex-col justify-center gap-6">
+            <div className="space-y-2">
+                <Badge variant="outline">Stap 1 van 2</Badge>
+                <h1 className="text-3xl font-semibold tracking-tight">
+                    Zet je backlog klaar
+                </h1>
+                <p className="max-w-2xl text-sm text-muted-foreground">
+                    Plak losse items of importeer een CSV. De sessie blijft
+                    lokaal en is direct klaar om te stemmen.
                 </p>
             </div>
 
-            <div className="setup-grid">
-                <div className="setup-card">
-                    <div className="setup-card-head">
-                        <div className="setup-icon">
-                            <Icon name="edit" size={16} />
+            <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                    <CardHeader>
+                        <div className="flex size-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                            <Plus className="size-5" />
                         </div>
-                        <div>
-                            <h3>Handmatig toevoegen</h3>
-                            <p>Plak of typ items — één per regel.</p>
+                        <CardTitle>Items plakken</CardTitle>
+                        <CardDescription>
+                            Een regel per story. Gebruik optioneel een key aan
+                            het begin.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <Textarea
+                            value={text}
+                            onChange={(event) => setText(event.target.value)}
+                            placeholder={`POK-101 Login flow afronden\nPOK-102 Betalingsstatus tonen`}
+                            className="min-h-44 resize-none"
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                            <span className="text-xs text-muted-foreground">
+                                {
+                                    text
+                                        .split(/\r?\n/)
+                                        .filter((line) => line.trim()).length
+                                }{' '}
+                                regels klaar
+                            </span>
+                            <Button type="button" onClick={handleTextAdd}>
+                                Toevoegen
+                                <ArrowRight className="size-4" />
+                            </Button>
                         </div>
-                    </div>
-                    <textarea
-                        className="story-textarea"
-                        placeholder={
-                            'Login flow vernieuwen\nDashboard performance audit\nSlack notificaties opnieuw bekijken'
-                        }
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                    />
-                    <div className="setup-card-foot">
-                        <span className="hint">
-                            {draft.split(/\n/).filter((l) => l.trim()).length}{' '}
-                            regel(s)
-                        </span>
-                        <button
-                            type="button"
-                            className="btn-primary"
-                            onClick={submitDraft}
-                            disabled={!draft.trim()}
-                        >
-                            <Icon name="plus" size={14} />
-                            Toevoegen
-                        </button>
-                    </div>
-                </div>
+                    </CardContent>
+                </Card>
 
-                <div className="setup-card">
-                    <div className="setup-card-head">
-                        <div className="setup-icon">
-                            <Icon name="link" size={16} />
+                <Card>
+                    <CardHeader>
+                        <div className="flex size-10 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
+                            <FileUp className="size-5" />
                         </div>
-                        <div>
-                            <h3>CSV importeren</h3>
-                            <p>
-                                Eén item per regel. <code>POK-101, Title</code>{' '}
-                                of alleen titel.
-                            </p>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        className="dropzone"
-                        onClick={() => fileRef.current?.click()}
-                    >
-                        <Icon name="link" size={24} />
-                        <div className="dz-title">Klik om CSV te kiezen</div>
-                        <div className="dz-sub">
-                            of sleep een .csv bestand hierheen
-                        </div>
-                    </button>
-                    <input
-                        ref={fileRef}
-                        type="file"
-                        accept=".csv,text/csv,text/plain"
-                        style={{ display: 'none' }}
-                        onChange={onFile}
-                    />
-                    <div className="setup-card-foot">
-                        <span className="hint">UTF-8 · comma/semicolon</span>
-                        <button
+                        <CardTitle>CSV importeren</CardTitle>
+                        <CardDescription>
+                            Ondersteunt kolommen zoals title, name, summary, key
+                            en id.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <label
+                            htmlFor="story-csv"
+                            className="flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed bg-background p-6 text-center transition hover:bg-accent"
+                        >
+                            <FileUp className="mb-3 size-8 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                                Klik om CSV te kiezen
+                            </span>
+                            <span className="mt-1 text-xs text-muted-foreground">
+                                UTF-8, komma of puntkomma
+                            </span>
+                            {fileName && (
+                                <Badge className="mt-4" variant="secondary">
+                                    {fileName}
+                                </Badge>
+                            )}
+                        </label>
+                        <Input
+                            id="story-csv"
+                            type="file"
+                            accept=".csv,text/csv,text/plain"
+                            className="sr-only"
+                            onChange={handleFile}
+                        />
+                        <Button
                             type="button"
-                            className="btn-ghost"
+                            variant="outline"
                             onClick={() =>
                                 onAdd([
                                     {
-                                        key: 'POK-201',
-                                        title: 'Voorbeeld: zoekfilter onthouden tussen sessies',
+                                        key: 'POK-101',
+                                        title: 'Checkout toont betaalstatus in real time',
                                     },
                                     {
-                                        key: 'POK-202',
-                                        title: 'Voorbeeld: bulk archiveren van afgeronde tickets',
+                                        key: 'POK-102',
+                                        title: 'Teamleden kunnen sessielink delen',
                                     },
                                     {
-                                        key: 'POK-203',
-                                        title: 'Voorbeeld: dark mode voor admin dashboard',
+                                        key: 'POK-103',
+                                        title: 'Facilitator accepteert consensuswaarde',
                                     },
                                 ])
                             }
                         >
-                            <Icon name="sparkle" size={14} />
-                            Voorbeeld
-                        </button>
-                    </div>
-                </div>
+                            <Sparkles className="size-4" />
+                            Voorbeeld gebruiken
+                        </Button>
+                    </CardContent>
+                </Card>
             </div>
 
             {stories.length > 0 && (
-                <div className="pending">
-                    <div className="pending-head">
-                        <h3>
-                            {stories.length}{' '}
-                            {stories.length === 1 ? 'item' : 'items'} klaar
-                        </h3>
-                        <button
-                            type="button"
-                            className="btn-primary big"
-                            onClick={onStart}
-                        >
+                <Card>
+                    <CardHeader className="flex-row items-center justify-between gap-4">
+                        <div>
+                            <CardTitle>
+                                {stories.length}{' '}
+                                {stories.length === 1 ? 'item' : 'items'} klaar
+                            </CardTitle>
+                            <CardDescription>
+                                Controleer de volgorde voordat je start.
+                            </CardDescription>
+                        </div>
+                        <Button type="button" size="lg" onClick={onStart}>
                             Start sessie
-                            <Icon name="chevronRight" size={16} />
-                        </button>
-                    </div>
-                    <ol className="pending-list">
-                        {stories.map((s, i) => (
-                            <li key={s.key}>
-                                <span className="pending-key">{s.key}</span>
-                                <span className="pending-title">{s.title}</span>
-                                {s.estimate != null && (
-                                    <span className="story-estimate has">
-                                        {s.estimate}
-                                    </span>
-                                )}
-                                <button
-                                    type="button"
-                                    className="row-remove"
-                                    onClick={() => onRemove(i)}
-                                    aria-label="Verwijderen"
+                            <ArrowRight className="size-4" />
+                        </Button>
+                    </CardHeader>
+                    <CardContent>
+                        <ol className="divide-y rounded-md border">
+                            {stories.map((story, index) => (
+                                <li
+                                    key={story.key}
+                                    className="grid grid-cols-[auto_1fr_auto] items-center gap-3 p-3"
                                 >
-                                    <Icon name="trash" size={14} />
-                                </button>
-                            </li>
-                        ))}
-                    </ol>
-                </div>
+                                    <Badge variant="outline">{story.key}</Badge>
+                                    <span className="min-w-0 truncate text-sm font-medium">
+                                        {story.title}
+                                    </span>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => onRemove(index)}
+                                        aria-label="Verwijderen"
+                                    >
+                                        <Trash2 className="size-4" />
+                                    </Button>
+                                </li>
+                            ))}
+                        </ol>
+                    </CardContent>
+                </Card>
             )}
         </div>
     );
 }
 
-/* ─── Playing view ─────────────────────────────────────────── */
 interface PlayingViewProps {
     activeStory: Story;
     players: Player[];
@@ -882,18 +1105,18 @@ interface PlayingViewProps {
     flipping: boolean;
     myVote: CardValue | undefined;
     me: Player;
-    castVote: (val: CardValue) => void;
+    castVote: (value: CardValue) => void;
     handleReveal: () => void;
     handleRevote: () => void;
     handleAccept: (estimate: number | null) => void;
     votedCount: number;
     totalVoters: number;
-    avgFmt: string;
+    averageFormatted: string;
     suggested: number | null;
-    dist: Record<string, number>;
-    maxDist: number;
+    distribution: Record<string, number>;
+    maxDistribution: number;
     consensus: Consensus;
-    activeIdx: number;
+    activeIndex: number;
     totalStories: number;
     doneCount: number;
 }
@@ -914,38 +1137,41 @@ function PlayingView({
     handleAccept,
     votedCount,
     totalVoters,
-    avgFmt,
+    averageFormatted,
     suggested,
-    dist,
-    maxDist,
+    distribution,
+    maxDistribution,
     consensus,
-    activeIdx,
+    activeIndex,
     totalStories,
     doneCount,
 }: PlayingViewProps) {
     const isIntro = playStage === 'intro';
+
     return (
-        <>
+        <div className="flex h-full min-h-[680px] flex-col">
             {!isIntro && (
-                <div className="play-header" key={activeStory.key}>
-                    <div className="play-meta">
-                        <span className="step-chip small">
-                            Item {activeIdx + 1} van {totalStories}
-                        </span>
-                        <span className="key">{activeStory.key}</span>
+                <div className="mb-4 rounded-lg border bg-card p-4 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <Badge variant="secondary">
+                            Item {activeIndex + 1} van {totalStories}
+                        </Badge>
+                        <Badge variant="outline">{activeStory.key}</Badge>
                     </div>
-                    <h2 className="play-title">{activeStory.title}</h2>
-                    <div className="play-progress">
-                        <div className="play-progress-bar">
+                    <h1 className="mt-3 text-2xl font-semibold tracking-tight">
+                        {activeStory.title}
+                    </h1>
+                    <div className="mt-4 flex items-center gap-3">
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
                             <div
-                                className="play-progress-fill"
+                                className="h-full rounded-full bg-primary transition-all"
                                 style={{
                                     width: `${(doneCount / totalStories) * 100}%`,
                                 }}
                             />
                         </div>
-                        <span className="play-progress-text">
-                            {doneCount} / {totalStories} ingeschat
+                        <span className="text-xs text-muted-foreground">
+                            {doneCount}/{totalStories} ingeschat
                         </span>
                     </div>
                 </div>
@@ -954,66 +1180,79 @@ function PlayingView({
             {isIntro ? (
                 <StoryIntro
                     activeStory={activeStory}
-                    activeIdx={activeIdx}
+                    activeIndex={activeIndex}
                     totalStories={totalStories}
                     onStart={handleStartVoting}
                 />
             ) : (
-                <div className="table-area-clean">
-                    <div className="seat-row top">
+                <div className="flex flex-1 flex-col justify-between gap-6">
+                    <div className="grid gap-3 md:grid-cols-4">
                         {players
-                            .filter((p) => !p.you)
-                            .map((p) => (
+                            .filter((player) => !player.you)
+                            .map((player) => (
                                 <Seat
-                                    key={p.id}
-                                    player={p}
-                                    vote={votes[p.id]}
+                                    key={player.id}
+                                    player={player}
+                                    vote={votes[player.id]}
                                     revealed={revealed}
                                     flipping={flipping}
                                 />
                             ))}
                     </div>
 
-                    <div className="table-clean">
-                        {playStage !== 'revealed' ? (
-                            <>
-                                <div className="table-status">
-                                    <span className="table-status-dot" />
-                                    {playStage === 'flipping'
-                                        ? 'Kaarten draaien om…'
-                                        : votedCount === 0
-                                          ? 'Kies een kaart om te beginnen'
-                                          : `${votedCount} van ${totalVoters} gestemd`}
-                                </div>
-                                <button
-                                    type="button"
-                                    className="reveal-btn"
-                                    onClick={handleReveal}
-                                    disabled={
-                                        votedCount === 0 ||
-                                        playStage === 'flipping'
-                                    }
-                                >
-                                    {playStage === 'flipping'
-                                        ? 'Onthullen…'
-                                        : 'Onthul kaarten'}
-                                </button>
-                            </>
-                        ) : (
-                            <RevealPanel
-                                key={`reveal-${activeStory.key}`}
-                                avgFmt={avgFmt}
-                                suggested={suggested}
-                                consensus={consensus}
-                                dist={dist}
-                                maxDist={maxDist}
-                                handleRevote={handleRevote}
-                                handleAccept={handleAccept}
-                            />
-                        )}
-                    </div>
+                    <Card className="mx-auto w-full max-w-3xl border-primary/10 bg-background/80 shadow-md">
+                        <CardContent className="flex min-h-72 flex-col items-center justify-center p-6 text-center">
+                            {playStage !== 'revealed' ? (
+                                <>
+                                    <Badge
+                                        variant="outline"
+                                        className="mb-4 gap-2 px-3 py-1"
+                                    >
+                                        <span className="size-2 rounded-full bg-primary" />
+                                        {playStage === 'flipping'
+                                            ? 'Kaarten draaien om'
+                                            : votedCount === 0
+                                              ? 'Kies een kaart om te beginnen'
+                                              : `${votedCount} van ${totalVoters} gestemd`}
+                                    </Badge>
+                                    <h2 className="text-3xl font-semibold tracking-tight">
+                                        Planningtafel
+                                    </h2>
+                                    <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                                        Stemmen blijven verborgen tot de
+                                        facilitator de kaarten onthult.
+                                    </p>
+                                    <Button
+                                        type="button"
+                                        size="lg"
+                                        className="mt-6"
+                                        onClick={handleReveal}
+                                        disabled={
+                                            votedCount === 0 ||
+                                            playStage === 'flipping'
+                                        }
+                                    >
+                                        {playStage === 'flipping'
+                                            ? 'Onthullen...'
+                                            : 'Onthul kaarten'}
+                                        <Sparkles className="size-4" />
+                                    </Button>
+                                </>
+                            ) : (
+                                <RevealPanel
+                                    averageFormatted={averageFormatted}
+                                    suggested={suggested}
+                                    consensus={consensus}
+                                    distribution={distribution}
+                                    maxDistribution={maxDistribution}
+                                    handleRevote={handleRevote}
+                                    handleAccept={handleAccept}
+                                />
+                            )}
+                        </CardContent>
+                    </Card>
 
-                    <div className="seat-row bottom">
+                    <div className="mx-auto w-full max-w-sm">
                         <Seat
                             player={me}
                             vote={votes[me.id]}
@@ -1026,87 +1265,115 @@ function PlayingView({
             )}
 
             {!isIntro && playStage !== 'revealed' && (
-                <div className="dock">
-                    <div className="dock-label">Gooi je kaart op tafel</div>
-                    <div className="cards">
-                        {FIB.map((v) => (
+                <div className="sticky bottom-3 mt-6 rounded-lg border bg-card/95 p-3 shadow-lg backdrop-blur">
+                    <div className="mb-3 text-center text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                        Gooi je kaart op tafel
+                    </div>
+                    <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+                        {FIB.map((value) => (
                             <button
                                 type="button"
-                                key={v}
-                                className={`vote-card ${myVote === v ? 'selected ' : ''}${v === '☕' ? 'coffee' : ''}`}
-                                onClick={() => castVote(v)}
+                                key={value}
+                                className={cn(
+                                    'flex aspect-[3/4] min-h-20 items-center justify-center rounded-lg border bg-background text-2xl font-semibold shadow-xs transition hover:-translate-y-1 hover:border-primary hover:shadow-md disabled:pointer-events-none disabled:opacity-60',
+                                    myVote === value &&
+                                        'border-primary bg-primary text-primary-foreground shadow-md ring-4 ring-primary/15',
+                                    value === '☕' && 'text-xl',
+                                )}
+                                onClick={() => castVote(value)}
                                 disabled={playStage === 'flipping'}
+                                aria-pressed={myVote === value}
                             >
-                                {v}
+                                {value}
                             </button>
                         ))}
                     </div>
                 </div>
             )}
-        </>
+        </div>
     );
 }
 
 interface StoryIntroProps {
     activeStory: Story;
-    activeIdx: number;
+    activeIndex: number;
     totalStories: number;
     onStart: () => void;
 }
 
 function StoryIntro({
     activeStory,
-    activeIdx,
+    activeIndex,
     totalStories,
     onStart,
 }: StoryIntroProps) {
     return (
-        <div className="story-intro">
-            <div className="intro-glow" />
-            <div className="intro-step">
-                Item {activeIdx + 1} van {totalStories}
-            </div>
-            <div className="intro-key">{activeStory.key}</div>
-            <h1 className="intro-title">{activeStory.title}</h1>
-            <div className="intro-divider">
-                <span />
-            </div>
-            <button
-                type="button"
-                className="btn-primary big intro-start"
-                onClick={onStart}
-            >
-                Begin met stemmen
-                <Icon name="chevronRight" size={16} />
-            </button>
-            <div className="intro-hint">of druk op een kaart</div>
+        <div className="flex h-full min-h-[650px] items-center justify-center">
+            <Card className="relative w-full max-w-3xl overflow-hidden text-center">
+                <div className="absolute inset-x-0 top-0 h-1 bg-primary" />
+                <CardHeader className="items-center px-8 pt-12">
+                    <Badge variant="secondary">
+                        Item {activeIndex + 1} van {totalStories}
+                    </Badge>
+                    <Badge variant="outline" className="mt-4 text-sm">
+                        {activeStory.key}
+                    </Badge>
+                    <CardTitle className="mt-4 max-w-2xl text-4xl leading-tight">
+                        {activeStory.title}
+                    </CardTitle>
+                    <CardDescription className="max-w-md">
+                        Lees het item kort voor en start daarna de stemronde.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center gap-4 px-8 pb-12">
+                    <Button type="button" size="lg" onClick={onStart}>
+                        Begin met stemmen
+                        <ArrowRight className="size-4" />
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                        De kaarten verschijnen onderaan zodra de ronde loopt.
+                    </span>
+                </CardContent>
+            </Card>
         </div>
     );
 }
 
 function RevealValue({ value }: { value: CardValue }) {
-    const num = parseFloat(value);
-    const [shown, setShown] = useState<number | string>(
-        isNaN(num) ? value : 0,
-    );
+    const numericValue = Number.parseFloat(value);
+
+    if (Number.isNaN(numericValue)) {
+        return <>{value}</>;
+    }
+
+    return <AnimatedRevealValue value={numericValue} />;
+}
+
+function AnimatedRevealValue({ value }: { value: number }) {
+    const [shown, setShown] = useState(0);
+
     useEffect(() => {
-        if (isNaN(num)) {
-            setShown(value);
-            return;
-        }
-        const dur = 420;
+        const duration = 420;
         const start = performance.now();
         let raf = 0;
-        const tick = (now: number) => {
-            const t = Math.min(1, (now - start) / dur);
-            const e = 1 - Math.pow(1 - t, 3);
-            setShown(Math.round(num * e));
-            if (t < 1) raf = requestAnimationFrame(tick);
-            else setShown(num);
+
+        const tick = (now: number): void => {
+            const t = Math.min(1, (now - start) / duration);
+            const eased = 1 - Math.pow(1 - t, 3);
+            setShown(Math.round(value * eased));
+
+            if (t < 1) {
+                raf = requestAnimationFrame(tick);
+            } else {
+                setShown(value);
+            }
         };
+
         raf = requestAnimationFrame(tick);
+
         return () => cancelAnimationFrame(raf);
-    }, [value, num]);
+    }, [value]);
+
     return <>{shown}</>;
 }
 
@@ -1120,245 +1387,333 @@ interface SeatProps {
 
 function Seat({ player, vote, revealed, flipping, isYou }: SeatProps) {
     const [justThrown, setJustThrown] = useState(false);
-    const prev = useRef<CardValue | undefined>(vote);
+    const previous = useRef<CardValue | undefined>(vote);
+
     useEffect(() => {
-        if (vote != null && prev.current == null) {
+        if (vote != null && previous.current == null) {
             setJustThrown(true);
-            const t = setTimeout(() => setJustThrown(false), 480);
-            prev.current = vote;
-            return () => clearTimeout(t);
+            const timeout = window.setTimeout(() => setJustThrown(false), 480);
+            previous.current = vote;
+
+            return () => window.clearTimeout(timeout);
         }
-        prev.current = vote;
+
+        previous.current = vote;
     }, [vote]);
 
-    if (!player) return null;
     const hasVoted = vote != null;
-
-    let wrapCls = 'pcard';
-    if (!hasVoted) wrapCls += ' empty';
-    if (hasVoted && (revealed || flipping)) wrapCls += ' flipped';
-    if (justThrown && !revealed && !flipping) wrapCls += ' thrown';
-    if (isYou) wrapCls += ' you';
+    const cardFlipped = hasVoted && (revealed || flipping);
 
     return (
-        <div className="seat-inline">
-            <div className={wrapCls}>
-                <div className="pcard-face pcard-back">
-                    {!hasVoted ? (
-                        <span className="q">?</span>
-                    ) : (
-                        <span className="dot-back" />
-                    )}
+        <div
+            className={cn(
+                'rounded-lg border bg-card p-3 shadow-sm',
+                isYou && 'border-primary/40 bg-primary/5',
+            )}
+        >
+            <div className="flex items-center gap-3">
+                <div className="h-20 w-14 [perspective:900px]">
+                    <div
+                        className={cn(
+                            'relative h-full w-full transition-transform duration-500 [transform-style:preserve-3d]',
+                            cardFlipped && '[transform:rotateY(180deg)]',
+                            justThrown && '-translate-y-1',
+                        )}
+                    >
+                        <div className="absolute inset-0 flex items-center justify-center rounded-md border bg-secondary text-lg font-semibold [backface-visibility:hidden]">
+                            {hasVoted ? (
+                                <span className="size-2 rounded-full bg-primary" />
+                            ) : (
+                                <span className="text-muted-foreground">?</span>
+                            )}
+                        </div>
+                        <div className="absolute inset-0 flex [transform:rotateY(180deg)] items-center justify-center rounded-md border border-primary/30 bg-background text-2xl font-semibold shadow-sm [backface-visibility:hidden]">
+                            {hasVoted && revealed ? (
+                                <RevealValue value={vote} />
+                            ) : hasVoted ? (
+                                vote
+                            ) : (
+                                ''
+                            )}
+                        </div>
+                    </div>
                 </div>
-                <div className="pcard-face pcard-front">
-                    {hasVoted && revealed ? (
-                        <RevealValue value={vote} />
-                    ) : hasVoted ? (
-                        vote
-                    ) : (
-                        ''
-                    )}
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                        <PlayerAvatar player={player} />
+                        <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">
+                                {player.name}
+                            </div>
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                {isYou
+                                    ? 'Jij'
+                                    : player.host
+                                      ? 'Host'
+                                      : 'Speler'}
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div className="seat-name">
-                <div
-                    className="avatar xs"
-                    style={{ background: player.color }}
+                <Badge
+                    className="ml-auto"
+                    variant={hasVoted ? 'default' : 'outline'}
                 >
-                    {player.name[0]}
-                </div>
-                <span>{player.name}</span>
-                {isYou && <span className="you-tag">jij</span>}
+                    {revealed && hasVoted ? vote : hasVoted ? 'klaar' : 'open'}
+                </Badge>
             </div>
         </div>
     );
 }
 
 interface RevealPanelProps {
-    avgFmt: string;
+    averageFormatted: string;
     suggested: number | null;
     consensus: Consensus;
-    dist: Record<string, number>;
-    maxDist: number;
+    distribution: Record<string, number>;
+    maxDistribution: number;
     handleRevote: () => void;
     handleAccept: (estimate: number | null) => void;
 }
 
 function RevealPanel({
-    avgFmt,
+    averageFormatted,
     suggested,
     consensus,
-    dist,
-    maxDist,
+    distribution,
+    maxDistribution,
     handleRevote,
     handleAccept,
 }: RevealPanelProps) {
     return (
-        <div className="reveal-panel">
-            <div className="reveal-stats">
-                <div className="stat-block">
-                    <div className="stat-label">Gemiddelde</div>
-                    <div className="stat-value">{avgFmt}</div>
-                </div>
-                <div className="stat-divider" />
-                <div className="stat-block accent">
-                    <div className="stat-label">Suggestie</div>
-                    <div className="stat-value">{suggested ?? '—'}</div>
-                </div>
-                <div className="stat-divider" />
-                <div className="stat-block">
-                    <div className="stat-label">Akkoord</div>
-                    <div className="stat-value">
-                        <span className="emoji">{consensus.emoji}</span>
-                    </div>
-                    <div className="stat-sub">{consensus.label}</div>
-                </div>
+        <div className="w-full space-y-6 text-left">
+            <div className="grid gap-3 sm:grid-cols-3">
+                <ResultStat label="Gemiddelde" value={averageFormatted} />
+                <ResultStat
+                    label="Suggestie"
+                    value={suggested?.toString() ?? '-'}
+                    accent
+                />
+                <ResultStat
+                    label="Akkoord"
+                    value={consensus.emoji}
+                    subValue={consensus.label}
+                />
             </div>
 
-            <div className="dist mini">
-                {FIB.map((v) => {
-                    const c = dist[v] || 0;
-                    const h = (c / maxDist) * 100;
-                    return (
-                        <div className="dist-col" key={v}>
+            <div className="rounded-lg border bg-muted/40 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                    <div className="text-sm font-medium">Verdeling</div>
+                    <Badge variant="secondary">
+                        {Math.round(consensus.pct * 100)}% consensus
+                    </Badge>
+                </div>
+                <div className="grid h-36 grid-cols-10 items-end gap-2">
+                    {FIB.map((value) => {
+                        const count = distribution[value] || 0;
+                        const height = Math.max(
+                            count ? 12 : 4,
+                            (count / maxDistribution) * 100,
+                        );
+
+                        return (
                             <div
-                                className={`dist-bar ${c === 0 ? 'zero' : ''}`}
-                                style={{ height: c ? `${h}%` : '4px' }}
+                                className="flex h-full flex-col items-center justify-end gap-2"
+                                key={value}
                             >
-                                {c > 0 && <span className="count">{c}</span>}
+                                <div
+                                    className={cn(
+                                        'flex w-full items-start justify-center rounded-md bg-primary/70 pt-1 text-[10px] font-medium text-primary-foreground transition-all',
+                                        count === 0 && 'bg-muted-foreground/20',
+                                    )}
+                                    style={{ height: `${height}%` }}
+                                >
+                                    {count > 0 && count}
+                                </div>
+                                <span className="text-xs text-muted-foreground">
+                                    {value}
+                                </span>
                             </div>
-                            <span className="lbl">{v}</span>
-                        </div>
-                    );
-                })}
+                        );
+                    })}
+                </div>
             </div>
 
-            <div className="reveal-actions">
-                <button
-                    type="button"
-                    className="next-btn"
-                    onClick={handleRevote}
-                >
-                    <Icon name="rotate" size={14} />
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button type="button" variant="outline" onClick={handleRevote}>
+                    <RotateCcw className="size-4" />
                     Opnieuw stemmen
-                </button>
-                <button
-                    type="button"
-                    className="next-btn primary"
-                    onClick={() => handleAccept(suggested)}
-                >
-                    Accepteer {suggested ?? '—'} → volgende
-                    <Icon name="chevronRight" size={14} />
-                </button>
+                </Button>
+                <Button type="button" onClick={() => handleAccept(suggested)}>
+                    Accepteer {suggested ?? '-'}
+                    <ArrowRight className="size-4" />
+                </Button>
             </div>
         </div>
     );
 }
 
-/* ─── Complete view ─────────────────────────────────────────── */
+function ResultStat({
+    label,
+    value,
+    subValue,
+    accent = false,
+}: {
+    label: string;
+    value: string;
+    subValue?: string;
+    accent?: boolean;
+}) {
+    return (
+        <div
+            className={cn(
+                'rounded-lg border bg-background p-4 text-center',
+                accent && 'border-primary/40 bg-primary/5',
+            )}
+        >
+            <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                {label}
+            </div>
+            <div className="mt-2 text-3xl font-semibold">{value}</div>
+            {subValue && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                    {subValue}
+                </div>
+            )}
+        </div>
+    );
+}
+
 interface CompleteViewProps {
     stories: Story[];
     onRestart: () => void;
 }
 
 function CompleteView({ stories, onRestart }: CompleteViewProps) {
-    const total = stories.reduce((a, s) => a + (s.estimate || 0), 0);
+    const total = stories.reduce(
+        (sum, story) => sum + (story.estimate || 0),
+        0,
+    );
+
     return (
-        <div className="complete-wrap">
-            <div className="complete-icon">🎉</div>
-            <h1>Sessie afgerond</h1>
-            <p>
-                {stories.length} items ingeschat · totaal <b>{total}</b> punten
-            </p>
-            <div className="complete-list">
-                {stories.map((s) => (
-                    <div className="complete-row" key={s.key}>
-                        <span className="story-key">{s.key}</span>
-                        <span className="complete-title">{s.title}</span>
-                        <span className="story-estimate has">
-                            {s.estimate ?? '—'}
-                        </span>
+        <div className="flex h-full min-h-[650px] items-center justify-center">
+            <Card className="w-full max-w-3xl">
+                <CardHeader className="items-center text-center">
+                    <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
+                        <Check className="size-6" />
                     </div>
-                ))}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-                <button type="button" className="btn-ghost">
-                    <Icon name="link" size={14} /> Exporteer CSV
-                </button>
-                <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={onRestart}
-                >
-                    Nieuwe sessie
-                </button>
-            </div>
+                    <CardTitle className="text-3xl">Sessie afgerond</CardTitle>
+                    <CardDescription>
+                        {stories.length} items ingeschat met totaal {total}{' '}
+                        punten.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="divide-y rounded-md border">
+                        {stories.map((story) => (
+                            <div
+                                className="grid grid-cols-[auto_1fr_auto] items-center gap-3 p-3"
+                                key={story.key}
+                            >
+                                <Badge variant="outline">{story.key}</Badge>
+                                <span className="truncate text-sm font-medium">
+                                    {story.title}
+                                </span>
+                                <Badge>{story.estimate ?? '-'}</Badge>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                        <Button type="button" variant="outline">
+                            <FileUp className="size-4" />
+                            Exporteer CSV
+                        </Button>
+                        <Button type="button" onClick={onRestart}>
+                            Nieuwe sessie
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }
 
-/* ─── Invite modal ─────────────────────────────────────────── */
 interface InviteModalProps {
-    onClose: () => void;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     copied: boolean;
-    setCopied: Dispatch<SetStateAction<boolean>>;
+    setCopied: (copied: boolean) => void;
 }
 
-function InviteModal({ onClose, copied, setCopied }: InviteModalProps) {
+function InviteModal({
+    open,
+    onOpenChange,
+    copied,
+    setCopied,
+}: InviteModalProps) {
     return (
-        <div className="modal-backdrop" onClick={onClose}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
-                <h2>Spelers uitnodigen</h2>
-                <div className="subtitle">
-                    Iedereen met de link kan stemmen. Geen account nodig.
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Spelers uitnodigen</DialogTitle>
+                    <DialogDescription>
+                        Iedereen met de link kan stemmen. Geen account nodig.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                    <div className="flex gap-2">
+                        <Input
+                            readOnly
+                            value="poker.app/r/sprint-42-grooming"
+                            aria-label="Uitnodigingslink"
+                        />
+                        <Button
+                            type="button"
+                            variant={copied ? 'secondary' : 'default'}
+                            onClick={() => {
+                                setCopied(true);
+                                window.setTimeout(() => setCopied(false), 1600);
+                            }}
+                        >
+                            {copied ? (
+                                <Check className="size-4" />
+                            ) : (
+                                <Copy className="size-4" />
+                            )}
+                            {copied ? 'Gekopieerd' : 'Kopieer'}
+                        </Button>
+                    </div>
+
+                    <Separator />
+
+                    <div className="grid gap-2 sm:grid-cols-3">
+                        <Button type="button" variant="outline">
+                            <Mail className="size-4" />
+                            E-mail
+                        </Button>
+                        <Button type="button" variant="outline">
+                            <LinkIcon className="size-4" />
+                            Slack
+                        </Button>
+                        <Button type="button" variant="outline">
+                            <QrCode className="size-4" />
+                            QR code
+                        </Button>
+                    </div>
                 </div>
-                <div className="link-row">
-                    <input
-                        className="link-input"
-                        readOnly
-                        value="poker.app/r/sprint-42-grooming"
-                    />
-                    <button
-                        type="button"
-                        className={`btn-copy ${copied ? 'copied' : ''}`}
-                        onClick={() => {
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 1600);
-                        }}
-                    >
-                        {copied ? (
-                            <>
-                                <Icon name="check" size={14} /> Gekopieerd
-                            </>
-                        ) : (
-                            <>
-                                <Icon name="copy" size={14} /> Kopieer
-                            </>
-                        )}
-                    </button>
-                </div>
-                <div className="share-row">
-                    <button type="button" className="share-btn">
-                        <Icon name="mail" size={15} />
-                        E-mail
-                    </button>
-                    <button type="button" className="share-btn">
-                        <Icon name="link" size={15} />
-                        Slack
-                    </button>
-                    <button type="button" className="share-btn">
-                        <Icon name="qr" size={15} />
-                        QR code
-                    </button>
-                </div>
-                <button
-                    type="button"
-                    className="modal-close"
-                    onClick={onClose}
-                >
-                    Sluiten
-                </button>
-            </div>
-        </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function PlayerAvatar({ player }: { player: Player }) {
+    return (
+        <Avatar className="size-7 border-2 border-background">
+            <AvatarFallback
+                className={cn('text-xs font-semibold text-white', player.color)}
+            >
+                {player.name[0]}
+            </AvatarFallback>
+        </Avatar>
     );
 }

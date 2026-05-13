@@ -12,12 +12,13 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import {
     InputOTP,
     InputOTPGroup,
     InputOTPSlot,
 } from '@/components/ui/input-otp';
-import { Spinner } from '@/components/ui/spinner';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAppearance } from '@/hooks/use-appearance';
 import { useClipboard } from '@/hooks/use-clipboard';
 import { OTP_MAX_LENGTH } from '@/hooks/use-two-factor-auth';
@@ -73,7 +74,7 @@ function TwoFactorSetupStep({
             ) : (
                 <>
                     <div className="mx-auto flex max-w-md overflow-hidden">
-                        <div className="mx-auto aspect-square w-64 rounded-lg border border-border">
+                        <div className="mx-auto aspect-square w-64 rounded-xl border bg-card shadow-sm">
                             <div className="z-10 flex h-full w-full items-center justify-center p-5">
                                 {qrCodeSvg ? (
                                     <div
@@ -89,7 +90,7 @@ function TwoFactorSetupStep({
                                         }}
                                     />
                                 ) : (
-                                    <Spinner />
+                                    <Skeleton className="aspect-square w-full" />
                                 )}
                             </div>
                         </div>
@@ -109,25 +110,24 @@ function TwoFactorSetupStep({
                     </div>
 
                     <div className="flex w-full space-x-2">
-                        <div className="flex w-full items-stretch overflow-hidden rounded-xl border border-border">
+                        <div className="flex w-full items-stretch gap-2">
                             {!manualSetupKey ? (
-                                <div className="flex h-full w-full items-center justify-center bg-muted p-3">
-                                    <Spinner />
-                                </div>
+                                <Skeleton className="h-10 w-full" />
                             ) : (
                                 <>
-                                    <input
+                                    <Input
                                         type="text"
                                         readOnly
                                         value={manualSetupKey}
-                                        className="h-full w-full bg-background p-3 text-foreground outline-none"
                                     />
-                                    <button
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
                                         onClick={() => copy(manualSetupKey)}
-                                        className="border-l border-border px-3 hover:bg-muted"
                                     >
-                                        <IconComponent className="w-4" />
-                                    </button>
+                                        <IconComponent className="size-4" />
+                                    </Button>
                                 </>
                             )}
                         </div>
