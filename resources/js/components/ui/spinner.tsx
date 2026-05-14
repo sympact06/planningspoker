@@ -1,10 +1,17 @@
-import { cn } from "@/lib/utils"
-import { RiLoaderLine } from "@remixicon/react"
+import { LoaderCircle } from 'lucide-react';
+import type { ComponentProps } from 'react';
 
-function Spinner({ className, ...props }: React.ComponentProps<"svg">) {
-  return (
-    <RiLoaderLine role="status" aria-label="Loading" className={cn("size-4 animate-spin", className)} {...props} />
-  )
+import { cn } from '@/lib/utils';
+
+function Spinner({ className, ...props }: ComponentProps<typeof LoaderCircle>) {
+    return (
+        <LoaderCircle
+            role="status"
+            aria-label="Loading"
+            className={cn('size-4 animate-spin', className)}
+            {...props}
+        />
+    );
 }
 
-export { Spinner }
+export { Spinner };

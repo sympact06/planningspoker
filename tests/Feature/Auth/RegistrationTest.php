@@ -1,5 +1,7 @@
 <?php
 
+use App\Enums\TeamRole;
+use App\Models\User;
 use Laravel\Fortify\Features;
 
 beforeEach(function () {
@@ -22,4 +24,13 @@ test('new users can register', function () {
 
     $this->assertAuthenticated();
     $response->assertRedirect(route('dashboard', absolute: false));
+
+    $user = User::query()->where('email', 'test@example.com')->firstOrFail();
+    $team = $user->teams()->firstOrFail();
+
+    expect($team->pivot->role)->toBe(TeamRole::Owner->value)
+        ->and($user->hasVerifiedEmail())->toBeFalse();
+
+    $this->get(route('dashboard'))
+        ->assertRedirect(route('verification.notice', absolute: false));
 });

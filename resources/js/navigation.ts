@@ -1,4 +1,5 @@
-import { BookOpen, FolderGit2, LayoutGrid } from 'lucide-react';
+import { BookOpen, Gauge, PlusCircle } from 'lucide-react';
+import { create as createSession } from '@/actions/App/Http/Controllers/PlanningSessionController';
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
@@ -6,19 +7,24 @@ export const mainNavItems: NavItem[] = [
     {
         title: 'Dashboard',
         href: dashboard(),
-        icon: LayoutGrid,
+        icon: Gauge,
+    },
+    {
+        title: 'Nieuwe sessie',
+        href: createSession(),
+        icon: PlusCircle,
     },
 ];
 
 export const footerNavItems: NavItem[] = [
     {
-        title: 'Repository',
-        href: 'https://github.com/laravel/react-starter-kit',
-        icon: FolderGit2,
+        title: 'Laravel docs',
+        href: 'https://laravel.com/docs',
+        icon: BookOpen,
     },
     {
-        title: 'Documentation',
-        href: 'https://laravel.com/docs/starter-kits#react',
+        title: 'Inertia docs',
+        href: 'https://inertiajs.com',
         icon: BookOpen,
     },
 ];
