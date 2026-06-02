@@ -40,7 +40,7 @@ export default function Welcome({
                                 <Sparkles className="size-4" />
                             </div>
                             <span className="text-sm font-semibold">
-                                Planpoker
+                                Planning Poker
                             </span>
                         </Link>
 
@@ -89,22 +89,33 @@ export default function Welcome({
                             </div>
 
                             <div className="flex flex-col gap-3 sm:flex-row">
-                                <Button asChild size="lg">
-                                    <Link href={home()}>
-                                        Start sessie
-                                        <ArrowRight className="size-4" />
-                                    </Link>
-                                </Button>
                                 {auth.user ? (
-                                    <Button asChild size="lg" variant="outline">
-                                        <Link href={dashboard()}>
-                                            Naar dashboard
-                                        </Link>
-                                    </Button>
+                                    <>
+                                        <Button asChild size="lg">
+                                            <Link href={dashboard()}>
+                                                Naar dashboard
+                                                <ArrowRight className="size-4" />
+                                            </Link>
+                                        </Button>
+                                    </>
                                 ) : (
-                                    <Button asChild size="lg" variant="outline">
-                                        <Link href={login()}>Inloggen</Link>
-                                    </Button>
+                                    <>
+                                        {canRegister && (
+                                            <Button asChild size="lg">
+                                                <Link href={register()}>
+                                                    Gratis starten
+                                                    <ArrowRight className="size-4" />
+                                                </Link>
+                                            </Button>
+                                        )}
+                                        <Button
+                                            asChild
+                                            size="lg"
+                                            variant="outline"
+                                        >
+                                            <Link href={login()}>Inloggen</Link>
+                                        </Button>
+                                    </>
                                 )}
                             </div>
 
