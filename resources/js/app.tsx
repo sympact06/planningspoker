@@ -11,7 +11,7 @@ configureEcho({
     broadcaster: 'reverb',
 });
 
-const appName = import.meta.env.VITE_APP_NAME || 'PlanPoker';
+const appName = import.meta.env.VITE_APP_NAME || 'Planning Poker';
 
 createInertiaApp({
     title: (title) => (title ? `${title} - ${appName}` : appName),
