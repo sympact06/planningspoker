@@ -37,6 +37,7 @@ final class PlanningSessionPresenter
             'id' => $planningSession->id,
             'name' => $planningSession->name,
             'status' => $planningSession->status->value,
+            'invite_url' => route('sessions.join', $planningSession->invite_token),
             'team' => [
                 'id' => $planningSession->team->id,
                 'name' => $planningSession->team->name,

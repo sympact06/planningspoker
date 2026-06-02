@@ -4,7 +4,9 @@ import {
     ArrowLeft,
     Check,
     Circle,
+    Copy,
     Flag,
+    Link2,
     PlusCircle,
     Radio,
     RefreshCcw,
@@ -56,6 +58,17 @@ export default function ShowSession({ session }: ShowSessionProps) {
     const connectionStatus = useConnectionStatus();
     const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(new Set());
     const [storyText, setStoryText] = useState('');
+    const [inviteCopied, setInviteCopied] = useState(false);
+
+    function copyInvite() {
+        if (typeof navigator === 'undefined' || !navigator.clipboard) {
+            return;
+        }
+        navigator.clipboard.writeText(session.invite_url).then(() => {
+            setInviteCopied(true);
+            window.setTimeout(() => setInviteCopied(false), 2000);
+        });
+    }
 
     const currentStory = useMemo(
         () =>
@@ -222,6 +235,29 @@ export default function ShowSession({ session }: ShowSessionProps) {
                                 <ArrowLeft className="size-4" />
                                 Dashboard
                             </Link>
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={copyInvite}
+                            title={session.invite_url}
+                        >
+                            {inviteCopied ? (
+                                <>
+                                    Gekopieerd
+                                    <Check className="size-4" />
+                                </>
+                            ) : (
+                                <>
+                                    Invite link
+                                    {typeof navigator !== 'undefined' &&
+                                    navigator.clipboard ? (
+                                        <Copy className="size-4" />
+                                    ) : (
+                                        <Link2 className="size-4" />
+                                    )}
+                                </>
+                            )}
                         </Button>
                         {session.can.facilitate && (
                             <Button

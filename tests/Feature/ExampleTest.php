@@ -1,7 +1,13 @@
 <?php
 
-test('home redirects to the authenticated dashboard', function () {
+use Inertia\Testing\AssertableInertia as Assert;
+
+test('guests can open planning poker without logging in', function () {
     $response = $this->get(route('home'));
 
-    $response->assertRedirect('/dashboard');
+    $response
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('poker')
+        );
 });

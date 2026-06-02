@@ -9,11 +9,13 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
 
 #[Fillable([
     'team_id',
     'facilitator_id',
     'name',
+    'invite_token',
     'status',
     'current_story_id',
     'current_voting_round_id',
@@ -23,6 +25,15 @@ class PlanningSession extends Model
 {
     /** @use HasFactory<PlanningSessionFactory> */
     use HasFactory;
+
+    protected static function booted(): void
+    {
+        static::creating(function (PlanningSession $session): void {
+            if (empty($session->invite_token)) {
+                $session->invite_token = Str::random(32);
+            }
+        });
+    }
 
     /**
      * @return array<string, string>

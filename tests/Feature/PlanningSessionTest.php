@@ -204,3 +204,51 @@ test('facilitator can import stories after session creation', function () {
     expect($story->key)->toBe('POK-301')
         ->and($planningSession->fresh()->current_story_id)->toBe($story->id);
 });
+
+test('sessions are created with a unique invite token', function () {
+    ['team' => $team, 'owner' => $owner] = planningTeamFixture();
+
+    $planningSession = PlanningSession::factory()
+        ->for($team)
+        ->for($owner, 'facilitator')
+        ->create();
+
+    expect($planningSession->invite_token)->toBeString()
+        ->and(strlen($planningSession->invite_token))->toBeGreaterThanOrEqual(16);
+});
+
+test('invite link adds authenticated user to the team and redirects to session', function () {
+    ['team' => $team, 'owner' => $owner, 'outsider' => $outsider] = planningTeamFixture();
+    $planningSession = PlanningSession::factory()
+        ->for($team)
+        ->for($owner, 'facilitator')
+        ->create();
+
+    $this->actingAs($outsider)
+        ->get(route('sessions.join', $planningSession->invite_token))
+        ->assertRedirect(route('sessions.show', $planningSession));
+
+    expect($team->fresh()->hasMember($outsider))->toBeTrue();
+});
+
+test('invite link returns 404 for unknown token', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->get(route('sessions.join', 'does-not-exist-token'))
+        ->assertNotFound();
+});
+
+test('invite link is idempotent for existing members', function () {
+    ['team' => $team, 'owner' => $owner, 'member' => $member] = planningTeamFixture();
+    $planningSession = PlanningSession::factory()
+        ->for($team)
+        ->for($owner, 'facilitator')
+        ->create();
+
+    $this->actingAs($member)
+        ->get(route('sessions.join', $planningSession->invite_token))
+        ->assertRedirect(route('sessions.show', $planningSession));
+
+    expect($team->fresh()->users()->where('users.id', $member->id)->count())->toBe(1);
+});

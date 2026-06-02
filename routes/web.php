@@ -6,14 +6,16 @@ use App\Http\Controllers\SessionStoryController;
 use App\Http\Controllers\VoteController;
 use App\Http\Controllers\VotingRoundController;
 use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
 
-Route::redirect('/', '/dashboard')->name('home');
+Route::get('/', fn () => Inertia::render('poker'))->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 
     Route::get('sessions/create', [PlanningSessionController::class, 'create'])->name('sessions.create');
     Route::post('sessions', [PlanningSessionController::class, 'store'])->name('sessions.store');
+    Route::get('sessions/join/{token}', [PlanningSessionController::class, 'join'])->name('sessions.join');
     Route::get('sessions/{planningSession}', [PlanningSessionController::class, 'show'])->name('sessions.show');
     Route::post('sessions/{planningSession}/complete', [PlanningSessionController::class, 'complete'])->name('sessions.complete');
 

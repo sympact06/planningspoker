@@ -73,6 +73,7 @@ export type PlanningSessionDetail = {
     id: number;
     name: string;
     status: 'setup' | 'active' | 'completed';
+    invite_url: string;
     team: {
         id: number;
         name: string;

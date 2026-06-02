@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\PlanningSessionStatus;
 use App\Enums\StoryStatus;
+use App\Enums\TeamRole;
 use App\Events\SessionUpdated;
 use App\Http\Requests\StorePlanningSessionRequest;
 use App\Models\PlanningSession;
@@ -95,6 +96,24 @@ class PlanningSessionController extends Controller
         return Inertia::render('sessions/show', [
             'session' => $presenter->for($planningSession, $user),
         ]);
+    }
+
+    public function join(Request $request, string $token): RedirectResponse
+    {
+        $planningSession = PlanningSession::query()
+            ->where('invite_token', $token)
+            ->firstOrFail();
+
+        /** @var User $user */
+        $user = $request->user();
+
+        if (! $planningSession->team->hasMember($user)) {
+            $planningSession->team->users()->attach($user->id, [
+                'role' => TeamRole::Member->value,
+            ]);
+        }
+
+        return to_route('sessions.show', $planningSession);
     }
 
     public function complete(PlanningSession $planningSession): RedirectResponse
