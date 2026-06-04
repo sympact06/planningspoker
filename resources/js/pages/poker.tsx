@@ -90,7 +90,18 @@ function mAnimate(
         return;
     }
 
-    return animate(target as never, keyframes as never, options as never);
+    // motion v12's animate() expects an Element or Element[] — a live NodeList
+    // (from querySelectorAll) isn't handled, so normalise it to an array.
+    const resolved =
+        typeof NodeList !== 'undefined' && target instanceof NodeList
+            ? Array.from(target)
+            : target;
+
+    if (Array.isArray(resolved) && resolved.length === 0) {
+        return;
+    }
+
+    return animate(resolved as never, keyframes as never, options as never);
 }
 
 /** Server stores '☕' as 'coffee'. Map both ways for display/submit. */
@@ -195,7 +206,7 @@ function CreateRoomView() {
             <Head title="Planning Poker" />
             <div className="app">
                 <Topbar theme={theme} setTheme={setTheme} phase="setup" />
-                <main className="stage">
+                <main className="stage" style={{ gridColumn: '1 / -1' }}>
                     <SetupView
                         stories={stories}
                         hostName={hostName}
@@ -250,7 +261,7 @@ function JoinRoomView({ room }: { room: RoomData }) {
             <Head title={`Meedoen · ${room.name}`} />
             <div className="app">
                 <Topbar theme={theme} setTheme={setTheme} phase="setup" />
-                <main className="stage">
+                <main className="stage" style={{ gridColumn: '1 / -1' }}>
                     <div className="setup">
                         <div className="intro-card" ref={ref} style={{ margin: 'auto' }}>
                             <span className="badge primary">Je bent uitgenodigd</span>
