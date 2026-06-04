@@ -8,6 +8,7 @@ use App\Enums\VotingRoundStatus;
 use App\Events\RoomUpdated;
 use App\Http\Requests\AcceptRoomRoundRequest;
 use App\Http\Requests\StoreRoomRoundRequest;
+use App\Jobs\SyncStoryWeightToGitLab;
 use App\Models\Room;
 use App\Models\RoomRound;
 use App\Models\RoomStory;
@@ -90,9 +91,28 @@ class RoomRoundController extends Controller
             ]);
         });
 
+        $this->syncEstimateToGitLab($room, $roomRound->story);
+
         RoomUpdated::dispatch($room->code);
 
         return back();
+    }
+
+    /**
+     * Push the freshly accepted estimate to GitLab when the story is linked and
+     * the room host has connected their account.
+     */
+    private function syncEstimateToGitLab(Room $room, RoomStory $story): void
+    {
+        if (! $story->isLinkedToGitLab() || ! is_numeric($story->final_estimate)) {
+            return;
+        }
+
+        if (! $room->gitlabConnection()->exists()) {
+            return;
+        }
+
+        SyncStoryWeightToGitLab::dispatch($story);
     }
 
     public function revote(Request $request, Room $room, RoomRound $roomRound): RedirectResponse

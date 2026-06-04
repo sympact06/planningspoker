@@ -19,6 +19,7 @@ final class RoomPresenter
             'participants',
             'stories',
             'currentRound.votes',
+            'gitlabConnection',
         ]);
 
         $currentRound = $room->currentRound;
@@ -44,6 +45,13 @@ final class RoomPresenter
                 'position' => $story->position,
                 'status' => $story->status->value,
                 'final_estimate' => $story->final_estimate,
+                'gitlab' => $story->isLinkedToGitLab()
+                    ? [
+                        'issue_iid' => (int) $story->gitlab_issue_iid,
+                        'web_url' => $story->gitlab_web_url,
+                        'synced_at' => $story->gitlab_synced_at?->toIso8601String(),
+                    ]
+                    : null,
             ])->all(),
             'players' => $participants->map(fn (RoomParticipant $participant): array => [
                 'id' => $participant->id,
@@ -78,6 +86,10 @@ final class RoomPresenter
                     'is_host' => $me->is_host,
                 ]
                 : null,
+            'gitlab' => [
+                'connected' => $room->gitlabConnection !== null,
+                'username' => $room->gitlabConnection?->gitlab_username,
+            ],
             'vote_values' => VoteValue::values(),
         ];
     }

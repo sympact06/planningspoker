@@ -24,7 +24,7 @@ class StoreRoomRequest extends FormRequest
         return [
             'name' => ['nullable', 'string', 'max:255'],
             'host_name' => ['nullable', 'string', 'max:50'],
-            'stories' => ['required', 'array', 'min:1', 'max:100'],
+            'stories' => ['nullable', 'array', 'max:100'],
             'stories.*.key' => ['nullable', 'string', 'max:50'],
             'stories.*.title' => ['required', 'string', 'max:255'],
         ];

@@ -1,6 +1,10 @@
 <?php
 
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\GitLabAuthController;
+use App\Http\Controllers\GitLabBrowseController;
+use App\Http\Controllers\GitLabImportController;
+use App\Http\Controllers\GitLabSyncController;
 use App\Http\Controllers\PlanningSessionController;
 use App\Http\Controllers\RoomController;
 use App\Http\Controllers\RoomRoundController;
@@ -27,6 +31,19 @@ Route::post('rooms/{room}/votes', [RoomVoteController::class, 'store'])->name('r
 Route::post('rooms/{room}/rounds/{roomRound}/reveal', [RoomRoundController::class, 'reveal'])->name('rooms.rounds.reveal');
 Route::post('rooms/{room}/rounds/{roomRound}/accept', [RoomRoundController::class, 'accept'])->name('rooms.rounds.accept');
 Route::post('rooms/{room}/rounds/{roomRound}/revote', [RoomRoundController::class, 'revote'])->name('rooms.rounds.revote');
+
+/*
+ * GitLab integration. The host connects their account via OAuth, browses and
+ * imports issues, and the agreed estimates are pushed back as issue weights.
+ */
+Route::get('rooms/{room}/gitlab/connect', [GitLabAuthController::class, 'connect'])->name('rooms.gitlab.connect');
+Route::get('auth/gitlab/callback', [GitLabAuthController::class, 'callback'])->name('gitlab.callback');
+Route::delete('rooms/{room}/gitlab', [GitLabAuthController::class, 'disconnect'])->name('rooms.gitlab.disconnect');
+Route::get('rooms/{room}/gitlab/projects', [GitLabBrowseController::class, 'projects'])->name('rooms.gitlab.projects');
+Route::get('rooms/{room}/gitlab/meta', [GitLabBrowseController::class, 'meta'])->name('rooms.gitlab.meta');
+Route::get('rooms/{room}/gitlab/issues', [GitLabBrowseController::class, 'issues'])->name('rooms.gitlab.issues');
+Route::post('rooms/{room}/gitlab/import', [GitLabImportController::class, 'store'])->name('rooms.gitlab.import');
+Route::post('rooms/{room}/gitlab/sync', [GitLabSyncController::class, 'store'])->name('rooms.gitlab.sync');
 
 Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');

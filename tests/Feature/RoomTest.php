@@ -16,13 +16,6 @@ beforeEach(function () {
     Event::fake([RoomUpdated::class]);
 });
 
-function joinAs(Room $room, RoomParticipant $participant): void
-{
-    test()->withSession([
-        CurrentRoomParticipant::sessionKey($room) => $participant->id,
-    ]);
-}
-
 it('lets a guest create a room with stories and become host', function () {
     $response = $this->post(route('rooms.store'), [
         'name' => 'Sprint 42',
@@ -47,9 +40,13 @@ it('lets a guest create a room with stories and become host', function () {
     Event::assertDispatched(RoomUpdated::class);
 });
 
-it('requires at least one story to create a room', function () {
-    $this->post(route('rooms.store'), ['stories' => []])
-        ->assertSessionHasErrors('stories');
+it('lets a guest create an empty room to fill from GitLab later', function () {
+    $this->post(route('rooms.store'), ['host_name' => 'Olivier', 'stories' => []])
+        ->assertSessionHasNoErrors();
+
+    $room = Room::query()->firstOrFail();
+    expect($room->stories)->toHaveCount(0);
+    expect($room->current_story_id)->toBeNull();
 });
 
 it('lets a guest join a room with just a name', function () {

@@ -1,5 +1,8 @@
 <?php
 
+use App\Models\Room;
+use App\Models\RoomParticipant;
+use App\Support\CurrentRoomParticipant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -44,7 +47,13 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/**
+ * Authenticate the test session as a given room participant (the anonymous
+ * room identity stored in the session, used across room feature tests).
+ */
+function joinAs(Room $room, RoomParticipant $participant): void
 {
-    // ..
+    test()->withSession([
+        CurrentRoomParticipant::sessionKey($room) => $participant->id,
+    ]);
 }

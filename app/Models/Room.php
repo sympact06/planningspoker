@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 #[Fillable([
@@ -72,6 +73,11 @@ class Room extends Model
     public function currentRound(): BelongsTo
     {
         return $this->belongsTo(RoomRound::class, 'current_round_id');
+    }
+
+    public function gitlabConnection(): HasOne
+    {
+        return $this->hasOne(RoomGitlabConnection::class);
     }
 
     /**

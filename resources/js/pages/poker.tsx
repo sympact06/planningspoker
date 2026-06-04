@@ -23,6 +23,17 @@ import {
 } from '@/actions/App/Http/Controllers/RoomRoundController';
 import { store as storeStoriesAction } from '@/actions/App/Http/Controllers/RoomStoryController';
 import { store as castVoteAction } from '@/actions/App/Http/Controllers/RoomVoteController';
+import {
+    connect as connectGitLabAction,
+    disconnect as disconnectGitLabAction,
+} from '@/actions/App/Http/Controllers/GitLabAuthController';
+import {
+    issues as gitlabIssuesAction,
+    meta as gitlabMetaAction,
+    projects as gitlabProjectsAction,
+} from '@/actions/App/Http/Controllers/GitLabBrowseController';
+import { store as importGitLabAction } from '@/actions/App/Http/Controllers/GitLabImportController';
+import { store as syncGitLabAction } from '@/actions/App/Http/Controllers/GitLabSyncController';
 import { Icon } from '@/components/poker-icon';
 import { PokerScene } from '@/lib/poker-scene';
 import './poker.css';
@@ -39,6 +50,12 @@ type RoomPlayer = {
     vote: string | null;
 };
 
+type GitLabStoryLink = {
+    issue_iid: number;
+    web_url: string | null;
+    synced_at: string | null;
+};
+
 type RoomStory = {
     id: number;
     key: string | null;
@@ -46,6 +63,7 @@ type RoomStory = {
     position: number;
     status: 'pending' | 'estimated';
     final_estimate: string | null;
+    gitlab: GitLabStoryLink | null;
 };
 
 type RoomRound = {
@@ -74,6 +92,7 @@ type RoomData = {
     current_round: RoomRound | null;
     stats: { total_stories: number; estimated_stories: number };
     me: RoomMe | null;
+    gitlab: { connected: boolean; username: string | null };
     vote_values: string[];
 };
 
@@ -185,7 +204,7 @@ function CreateRoomView() {
         ]);
 
     const start = () => {
-        if (!stories.length || submitting) {
+        if (submitting) {
             return;
         }
 
@@ -286,9 +305,7 @@ function JoinRoomView({ room }: { room: RoomData }) {
                                     </div>
                                 ))}
                             </div>
-                            <span>
-                                {room.players.length} al aan tafel
-                            </span>
+                            <span>{room.players.length} al aan tafel</span>
                         </div>
                     )}
 
@@ -332,6 +349,7 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
     const [playersOpen, setPlayersOpen] = useState(false);
     const [inviteOpen, setInviteOpen] = useState(false);
     const [manageOpen, setManageOpen] = useState(false);
+    const [gitlabOpen, setGitlabOpen] = useState(false);
 
     const { players, stories, current_round: round } = room;
     const isHost = me.is_host;
@@ -572,15 +590,18 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
     }, [numeric]);
 
     // ---- actions ----
-    const post = useCallback((url: string, data: Record<string, string | number | null> = {}) => {
-        router.post(url, data, {
-            preserveScroll: true,
-            preserveState: true,
-            only: ['room'],
-            onStart: () => setPending(true),
-            onFinish: () => setPending(false),
-        });
-    }, []);
+    const post = useCallback(
+        (url: string, data: Record<string, string | number | null> = {}) => {
+            router.post(url, data, {
+                preserveScroll: true,
+                preserveState: true,
+                only: ['room'],
+                onStart: () => setPending(true),
+                onFinish: () => setPending(false),
+            });
+        },
+        [],
+    );
 
     const handleVote = (card: string) => {
         if (stage !== 'voting') {
@@ -658,8 +679,17 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
                     currentStoryId={room.current_story_id}
                     phase={phase}
                     isHost={isHost}
+                    gitlabConnected={room.gitlab.connected}
                     onSelect={handleSelectStory}
                     onManage={() => setManageOpen(true)}
+                    onGitLab={() => setGitlabOpen(true)}
+                    onSyncGitLab={() =>
+                        router.post(
+                            syncGitLabAction(room.code).url,
+                            {},
+                            { preserveScroll: true },
+                        )
+                    }
                 />
 
                 <main className="stage">
@@ -672,29 +702,63 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
 
                     {phase === 'setup' && (
                         <div className="setup">
-                            <div className="intro-card" style={{ margin: 'auto' }}>
+                            <div
+                                className="intro-card"
+                                style={{ margin: 'auto' }}
+                            >
                                 <span className="badge primary">Lobby</span>
                                 <h1 className="intro-title">{room.name}</h1>
-                                <p style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                <p
+                                    style={{
+                                        color: 'hsl(var(--muted-foreground))',
+                                    }}
+                                >
                                     {isHost
                                         ? 'Voeg items toe om de sessie te starten.'
                                         : 'Wachten tot de host items toevoegt…'}
                                 </p>
                                 {isHost && (
-                                    <button
-                                        className="btn btn-primary btn-lg"
-                                        onClick={() => setManageOpen(true)}
+                                    <div
+                                        style={{
+                                            display: 'flex',
+                                            gap: 9,
+                                            justifyContent: 'center',
+                                            flexWrap: 'wrap',
+                                        }}
                                     >
-                                        <Icon name="plus" size={16} /> Items
-                                        toevoegen
-                                    </button>
+                                        <button
+                                            className="btn btn-primary btn-lg"
+                                            onClick={() => setManageOpen(true)}
+                                        >
+                                            <Icon name="plus" size={16} /> Items
+                                            toevoegen
+                                        </button>
+                                        <button
+                                            className="btn btn-outline btn-lg"
+                                            onClick={() => setGitlabOpen(true)}
+                                        >
+                                            <Icon name="cube" size={16} /> Uit
+                                            GitLab
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </div>
                     )}
 
                     {phase === 'complete' && (
-                        <CompleteView stories={stories} />
+                        <CompleteView
+                            stories={stories}
+                            isHost={isHost}
+                            gitlabConnected={room.gitlab.connected}
+                            onSyncGitLab={() =>
+                                router.post(
+                                    syncGitLabAction(room.code).url,
+                                    {},
+                                    { preserveScroll: true },
+                                )
+                            }
+                        />
                     )}
 
                     {phase === 'playing' && activeStory && (
@@ -733,6 +797,13 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
                 <ManageStoriesModal
                     code={room.code}
                     onClose={() => setManageOpen(false)}
+                />
+            )}
+
+            {gitlabOpen && (
+                <GitLabPickerModal
+                    room={room}
+                    onClose={() => setGitlabOpen(false)}
                 />
             )}
         </div>
@@ -880,7 +951,9 @@ function PlayersDropdown({
                 <div className="dropdown-panel">
                     <div className="dropdown-head">
                         <span>Aan tafel</span>
-                        <span style={{ textTransform: 'none', letterSpacing: 0 }}>
+                        <span
+                            style={{ textTransform: 'none', letterSpacing: 0 }}
+                        >
                             {onlineIds.size} online
                         </span>
                     </div>
@@ -958,16 +1031,23 @@ function Sidebar({
     currentStoryId,
     phase,
     isHost,
+    gitlabConnected,
     onSelect,
     onManage,
+    onGitLab,
+    onSyncGitLab,
 }: {
     stories: RoomStory[];
     currentStoryId: number | null;
     phase: string;
     isHost: boolean;
+    gitlabConnected: boolean;
     onSelect: (story: RoomStory) => void;
     onManage: () => void;
+    onGitLab: () => void;
+    onSyncGitLab: () => void;
 }) {
+    const hasGitlabStories = stories.some((s) => s.gitlab != null);
     const listRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         if (listRef.current) {
@@ -1018,7 +1098,15 @@ function Sidebar({
                             )}
                         </div>
                         <div className="story-body">
-                            {s.key && <span className="story-key">{s.key}</span>}
+                            {(s.key || s.gitlab) && (
+                                <span className="story-key">
+                                    {s.gitlab && <Icon name="cube" size={10} />}
+                                    {s.key ?? `#${s.gitlab?.issue_iid}`}
+                                    {s.gitlab?.synced_at && (
+                                        <Icon name="check" size={10} />
+                                    )}
+                                </span>
+                            )}
                             <div className="story-title">{s.title}</div>
                         </div>
                         <div
@@ -1033,13 +1121,31 @@ function Sidebar({
                 ))}
             </div>
             {phase === 'playing' && isHost && (
-                <div className="sidebar-foot">
+                <div
+                    className="sidebar-foot"
+                    style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                >
                     <button
                         className="btn btn-outline btn-sm"
                         onClick={onManage}
                     >
                         <Icon name="edit" size={13} /> Items beheren
                     </button>
+                    <button
+                        className="btn btn-outline btn-sm"
+                        onClick={onGitLab}
+                    >
+                        <Icon name="cube" size={13} /> Uit GitLab
+                    </button>
+                    {gitlabConnected && hasGitlabStories && (
+                        <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={onSyncGitLab}
+                        >
+                            <Icon name="check" size={13} /> Sync alles naar
+                            GitLab
+                        </button>
+                    )}
                 </div>
             )}
         </aside>
@@ -1170,7 +1276,11 @@ function PlayHUD({
                     </div>
 
                     {stage !== 'revealed' && (
-                        <Dock myVote={myVote} onVote={onVote} disabled={pending} />
+                        <Dock
+                            myVote={myVote}
+                            onVote={onVote}
+                            disabled={pending}
+                        />
                     )}
                 </div>
             )}
@@ -1218,7 +1328,10 @@ function ItemIntro({
                 <h1 className="intro-title">{activeStory.title}</h1>
                 <div className="intro-divider"></div>
                 {isHost ? (
-                    <button className="btn btn-primary btn-lg" onClick={onStart}>
+                    <button
+                        className="btn btn-primary btn-lg"
+                        onClick={onStart}
+                    >
                         Begin met stemmen <Icon name="chevronRight" size={16} />
                     </button>
                 ) : (
@@ -1345,7 +1458,9 @@ function ResultsPanel({
                     return (
                         <div className="dist-col" key={v}>
                             <div
-                                className={'dist-bar' + (c === 0 ? ' zero' : '')}
+                                className={
+                                    'dist-bar' + (c === 0 ? ' zero' : '')
+                                }
                                 style={{
                                     height: c
                                         ? `${(c / maxDist) * 100}%`
@@ -1606,7 +1721,9 @@ function SetupView({
                             Nog één stap — wie ben jij?
                         </p>
                         <label className="name-field">
-                            <span className="field-label">Jouw naam (host)</span>
+                            <span className="field-label">
+                                Jouw naam (host)
+                            </span>
                             <input
                                 className="name-input"
                                 placeholder="bv. Olivier"
@@ -1642,11 +1759,22 @@ function SetupView({
     );
 }
 
-function CompleteView({ stories }: { stories: RoomStory[] }) {
+function CompleteView({
+    stories,
+    isHost,
+    gitlabConnected,
+    onSyncGitLab,
+}: {
+    stories: RoomStory[];
+    isHost: boolean;
+    gitlabConnected: boolean;
+    onSyncGitLab: () => void;
+}) {
     const total = stories.reduce(
         (a, s) => a + (Number(s.final_estimate) || 0),
         0,
     );
+    const hasGitlabStories = stories.some((s) => s.gitlab != null);
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
         if (ref.current) {
@@ -1670,7 +1798,14 @@ function CompleteView({ stories }: { stories: RoomStory[] }) {
             <div className="complete-list">
                 {stories.map((s) => (
                     <div className="complete-row" key={s.id}>
-                        {s.key && <span className="story-key">{s.key}</span>}
+                        {(s.key || s.gitlab) && (
+                            <span className="story-key">
+                                {s.key ?? `#${s.gitlab?.issue_iid}`}
+                                {s.gitlab?.synced_at && (
+                                    <Icon name="check" size={10} />
+                                )}
+                            </span>
+                        )}
                         <span className="complete-title">{s.title}</span>
                         <span className="story-est has">
                             {s.final_estimate ?? '—'}
@@ -1678,7 +1813,15 @@ function CompleteView({ stories }: { stories: RoomStory[] }) {
                     </div>
                 ))}
             </div>
-            <div className="complete-actions" style={{ display: 'flex', gap: 9 }}>
+            <div
+                className="complete-actions"
+                style={{ display: 'flex', gap: 9 }}
+            >
+                {isHost && gitlabConnected && hasGitlabStories && (
+                    <button className="btn btn-outline" onClick={onSyncGitLab}>
+                        <Icon name="cube" size={16} /> Sync alles naar GitLab
+                    </button>
+                )}
                 <button
                     className="btn btn-primary"
                     onClick={() => router.visit('/')}
@@ -1720,7 +1863,11 @@ function InviteModal({
 
     return (
         <div className="modal-backdrop" onClick={onClose}>
-            <div className="modal" ref={ref} onClick={(e) => e.stopPropagation()}>
+            <div
+                className="modal"
+                ref={ref}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <h2>Spelers uitnodigen</h2>
                 <div className="sub">
                     Iedereen met de link kan stemmen. Geen account nodig.
@@ -1728,7 +1875,9 @@ function InviteModal({
                 <div className="link-row">
                     <input className="input" readOnly value={inviteUrl} />
                     <button
-                        className={'btn ' + (copied ? 'btn-secondary' : 'btn-primary')}
+                        className={
+                            'btn ' + (copied ? 'btn-secondary' : 'btn-primary')
+                        }
                         onClick={copy}
                     >
                         {copied ? (
@@ -1800,7 +1949,11 @@ function ManageStoriesModal({
 
     return (
         <div className="modal-backdrop" onClick={onClose}>
-            <div className="modal" ref={ref} onClick={(e) => e.stopPropagation()}>
+            <div
+                className="modal"
+                ref={ref}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <h2>Items toevoegen</h2>
                 <div className="sub">Eén item per regel.</div>
                 <textarea
@@ -1827,6 +1980,452 @@ function ManageStoriesModal({
                         <Icon name="plus" size={14} /> Toevoegen
                     </button>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+type GitLabProject = { id: number; name: string; path: string };
+type GitLabMeta = {
+    milestones: { id: number; title: string }[];
+    labels: { name: string; color: string }[];
+    iterations: { id: number; title: string }[];
+};
+type GitLabIssue = {
+    project_id: number;
+    iid: number;
+    title: string;
+    web_url: string;
+    weight: number | null;
+    reference: string;
+};
+
+async function fetchJson<T>(url: string): Promise<T> {
+    const response = await fetch(url, {
+        headers: {
+            Accept: 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(`GitLab request failed (${response.status})`);
+    }
+
+    return (await response.json()) as T;
+}
+
+function GitLabPickerModal({
+    room,
+    onClose,
+}: {
+    room: RoomData;
+    onClose: () => void;
+}) {
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (ref.current) {
+            mAnimate(
+                ref.current,
+                { opacity: [0, 1], y: [12, 0], scale: [0.97, 1] },
+                { duration: 0.25, ease: EASE },
+            );
+        }
+    }, []);
+
+    const code = room.code;
+    const [projects, setProjects] = useState<GitLabProject[]>([]);
+    const [projectSearch, setProjectSearch] = useState('');
+    const [projectId, setProjectId] = useState<number | null>(null);
+    const [meta, setMeta] = useState<GitLabMeta | null>(null);
+    const [milestone, setMilestone] = useState('');
+    const [labels, setLabels] = useState<string[]>([]);
+    const [iterationId, setIterationId] = useState('');
+    const [issueSearch, setIssueSearch] = useState('');
+    const [issues, setIssues] = useState<GitLabIssue[]>([]);
+    const [selected, setSelected] = useState<Record<string, GitLabIssue>>({});
+    const [loading, setLoading] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    // Load projects once connected (and whenever the project search changes).
+    useEffect(() => {
+        if (!room.gitlab.connected) {
+            return;
+        }
+
+        const handle = setTimeout(() => {
+            fetchJson<{ projects: GitLabProject[] }>(
+                gitlabProjectsAction.url(code, {
+                    query: { search: projectSearch || undefined },
+                }),
+            )
+                .then((data) => setProjects(data.projects))
+                .catch(() => setError('Projecten konden niet worden geladen.'));
+        }, 250);
+
+        return () => clearTimeout(handle);
+    }, [room.gitlab.connected, code, projectSearch]);
+
+    // Load filter metadata when a project is chosen.
+    useEffect(() => {
+        if (projectId == null) {
+            return;
+        }
+
+        setMeta(null);
+        setMilestone('');
+        setLabels([]);
+        setIterationId('');
+
+        fetchJson<GitLabMeta>(
+            gitlabMetaAction.url(code, { query: { project_id: projectId } }),
+        )
+            .then(setMeta)
+            .catch(() =>
+                setMeta({ milestones: [], labels: [], iterations: [] }),
+            );
+    }, [code, projectId]);
+
+    // Load issues whenever the project or any filter changes (debounced).
+    useEffect(() => {
+        if (projectId == null) {
+            setIssues([]);
+            return;
+        }
+
+        setLoading(true);
+        const handle = setTimeout(() => {
+            fetchJson<{ issues: GitLabIssue[] }>(
+                gitlabIssuesAction.url(code, {
+                    query: {
+                        project_id: projectId,
+                        milestone: milestone || undefined,
+                        labels: labels.length ? labels.join(',') : undefined,
+                        iteration_id: iterationId || undefined,
+                        search: issueSearch || undefined,
+                    },
+                }),
+            )
+                .then((data) => setIssues(data.issues))
+                .catch(() => setError('Issues konden niet worden geladen.'))
+                .finally(() => setLoading(false));
+        }, 300);
+
+        return () => clearTimeout(handle);
+    }, [code, projectId, milestone, labels, iterationId, issueSearch]);
+
+    const toggleIssue = (issue: GitLabIssue) => {
+        const id = `${issue.project_id}:${issue.iid}`;
+        setSelected((prev) => {
+            const next = { ...prev };
+            if (next[id]) {
+                delete next[id];
+            } else {
+                next[id] = issue;
+            }
+            return next;
+        });
+    };
+
+    const toggleLabel = (name: string) => {
+        setLabels((prev) =>
+            prev.includes(name)
+                ? prev.filter((l) => l !== name)
+                : [...prev, name],
+        );
+    };
+
+    const selectedList = Object.values(selected);
+
+    const submit = () => {
+        if (!selectedList.length || submitting) {
+            return;
+        }
+
+        setSubmitting(true);
+        router.post(
+            importGitLabAction.url(code),
+            {
+                issues: selectedList.map((i) => ({
+                    project_id: i.project_id,
+                    iid: i.iid,
+                    title: i.title,
+                    web_url: i.web_url,
+                    reference: i.reference,
+                })),
+            },
+            {
+                preserveScroll: true,
+                only: ['room'],
+                onSuccess: () => onClose(),
+                onFinish: () => setSubmitting(false),
+            },
+        );
+    };
+
+    return (
+        <div className="modal-backdrop" onClick={onClose}>
+            <div
+                className="modal"
+                ref={ref}
+                onClick={(e) => e.stopPropagation()}
+                style={{ maxWidth: 640, width: '92vw' }}
+            >
+                <h2>GitLab issues</h2>
+
+                {!room.gitlab.connected ? (
+                    <>
+                        <div className="sub">
+                            Koppel je GitLab-account om issues te importeren en
+                            de weight automatisch bij te werken.
+                        </div>
+                        <div style={{ display: 'flex', gap: 9, marginTop: 16 }}>
+                            <button
+                                className="btn btn-secondary"
+                                style={{ flex: 1 }}
+                                onClick={onClose}
+                            >
+                                Annuleren
+                            </button>
+                            <a
+                                className="btn btn-primary"
+                                style={{ flex: 1 }}
+                                href={connectGitLabAction.url(code)}
+                            >
+                                <Icon name="cube" size={14} /> Koppel GitLab
+                            </a>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        <div
+                            className="sub"
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                            }}
+                        >
+                            <span>
+                                Verbonden
+                                {room.gitlab.username
+                                    ? ` als ${room.gitlab.username}`
+                                    : ''}
+                            </span>
+                            <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() =>
+                                    router.delete(
+                                        disconnectGitLabAction.url(code),
+                                        { preserveScroll: true },
+                                    )
+                                }
+                            >
+                                Ontkoppelen
+                            </button>
+                        </div>
+
+                        <label className="name-field">
+                            <span className="field-label">Project</span>
+                            <input
+                                className="input"
+                                placeholder="Zoek project…"
+                                value={projectSearch}
+                                onChange={(e) =>
+                                    setProjectSearch(e.target.value)
+                                }
+                            />
+                        </label>
+                        <select
+                            className="input"
+                            value={projectId ?? ''}
+                            onChange={(e) =>
+                                setProjectId(
+                                    e.target.value
+                                        ? Number(e.target.value)
+                                        : null,
+                                )
+                            }
+                        >
+                            <option value="">— Kies een project —</option>
+                            {projects.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                    {p.name}
+                                </option>
+                            ))}
+                        </select>
+
+                        {projectId != null && (
+                            <>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        gap: 8,
+                                        marginTop: 10,
+                                        flexWrap: 'wrap',
+                                    }}
+                                >
+                                    <select
+                                        className="input"
+                                        style={{ flex: 1, minWidth: 130 }}
+                                        value={milestone}
+                                        onChange={(e) =>
+                                            setMilestone(e.target.value)
+                                        }
+                                    >
+                                        <option value="">
+                                            Alle milestones
+                                        </option>
+                                        {meta?.milestones.map((m) => (
+                                            <option key={m.id} value={m.title}>
+                                                {m.title}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <select
+                                        className="input"
+                                        style={{ flex: 1, minWidth: 130 }}
+                                        value={iterationId}
+                                        onChange={(e) =>
+                                            setIterationId(e.target.value)
+                                        }
+                                    >
+                                        <option value="">
+                                            Alle iterations
+                                        </option>
+                                        {meta?.iterations.map((it) => (
+                                            <option key={it.id} value={it.id}>
+                                                {it.title}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {meta && meta.labels.length > 0 && (
+                                    <div
+                                        style={{
+                                            display: 'flex',
+                                            gap: 6,
+                                            flexWrap: 'wrap',
+                                            marginTop: 10,
+                                        }}
+                                    >
+                                        {meta.labels.map((l) => (
+                                            <button
+                                                key={l.name}
+                                                className={
+                                                    'badge' +
+                                                    (labels.includes(l.name)
+                                                        ? ' primary'
+                                                        : '')
+                                                }
+                                                style={{ cursor: 'pointer' }}
+                                                onClick={() =>
+                                                    toggleLabel(l.name)
+                                                }
+                                            >
+                                                {l.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <input
+                                    className="input"
+                                    style={{ marginTop: 10 }}
+                                    placeholder="Zoek issues…"
+                                    value={issueSearch}
+                                    onChange={(e) =>
+                                        setIssueSearch(e.target.value)
+                                    }
+                                />
+
+                                <div
+                                    style={{
+                                        marginTop: 10,
+                                        maxHeight: 280,
+                                        overflowY: 'auto',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 4,
+                                    }}
+                                >
+                                    {loading && (
+                                        <div className="hint">Laden…</div>
+                                    )}
+                                    {!loading && issues.length === 0 && (
+                                        <div className="hint">
+                                            Geen open issues gevonden.
+                                        </div>
+                                    )}
+                                    {issues.map((issue) => {
+                                        const id = `${issue.project_id}:${issue.iid}`;
+                                        return (
+                                            <label
+                                                key={id}
+                                                className="story-item"
+                                                style={{
+                                                    cursor: 'pointer',
+                                                    alignItems: 'center',
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={!!selected[id]}
+                                                    onChange={() =>
+                                                        toggleIssue(issue)
+                                                    }
+                                                />
+                                                <div className="story-body">
+                                                    <span className="story-key">
+                                                        {issue.reference}
+                                                    </span>
+                                                    <div className="story-title">
+                                                        {issue.title}
+                                                    </div>
+                                                </div>
+                                                {issue.weight != null && (
+                                                    <div className="story-est has">
+                                                        {issue.weight}
+                                                    </div>
+                                                )}
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        )}
+
+                        {error && (
+                            <div
+                                className="hint"
+                                style={{ color: 'hsl(var(--destructive))' }}
+                            >
+                                {error}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: 9, marginTop: 16 }}>
+                            <button
+                                className="btn btn-secondary"
+                                style={{ flex: 1 }}
+                                onClick={onClose}
+                            >
+                                Annuleren
+                            </button>
+                            <button
+                                className="btn btn-primary"
+                                style={{ flex: 1 }}
+                                onClick={submit}
+                                disabled={!selectedList.length || submitting}
+                            >
+                                <Icon name="plus" size={14} /> Voeg{' '}
+                                {selectedList.length || ''} toe
+                            </button>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );
