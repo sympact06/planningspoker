@@ -364,6 +364,9 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
         });
         presence.joining((u: { id: number | string }) => {
             setOnlineIds((cur) => new Set(cur).add(Number(u.id)));
+            // A newcomer isn't in our props yet — pull the fresh roster so they
+            // appear at the table and in the player list immediately.
+            router.reload({ only: ['room'] });
         });
         presence.leaving((u: { id: number | string }) => {
             setOnlineIds((cur) => {
