@@ -1,11 +1,27 @@
+import { router } from '@inertiajs/react';
 import Clarity from '@microsoft/clarity';
+import type { Auth } from '@/types/auth';
 
 const projectId = import.meta.env.VITE_CLARITY_PROJECT_ID;
 const enabled = typeof window !== 'undefined' && Boolean(projectId);
 
 /**
- * Boots Clarity and wires baseline segmentation tags plus error-driven
- * recording priority. Safe to call when no project ID is configured.
+ * Identifies the visitor and tags whether they are signed in, based on the
+ * shared `auth.user` prop carried on every Inertia page.
+ */
+function syncVisitor(props: { auth?: Auth }): void {
+    const user = props.auth?.user;
+
+    Clarity.setTag('user_type', user ? 'authenticated' : 'guest');
+
+    if (user) {
+        Clarity.identify(String(user.id), undefined, undefined, user.name);
+    }
+}
+
+/**
+ * Boots Clarity and wires baseline segmentation tags, user identification, and
+ * error-driven recording priority. Safe to call when no project ID is set.
  */
 export function initClarity(): void {
     if (!enabled) {
@@ -19,15 +35,11 @@ export function initClarity(): void {
     window.addEventListener('unhandledrejection', () =>
         Clarity.upgrade('unhandled-rejection'),
     );
-}
 
-/** Ties the current Clarity session to an application user. */
-export function identifyUser(id: string | number, friendlyName?: string): void {
-    if (!enabled) {
-        return;
-    }
-
-    Clarity.identify(String(id), undefined, undefined, friendlyName);
+    // Fires on the initial page load and on every subsequent Inertia visit.
+    router.on('navigate', (event) => {
+        syncVisitor(event.detail.page.props as { auth?: Auth });
+    });
 }
 
 /** Records a custom event, available as a smart event / funnel step in Clarity. */
