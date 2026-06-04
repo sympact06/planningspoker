@@ -2176,7 +2176,14 @@ function GitLabPickerModal({
                 className="modal"
                 ref={ref}
                 onClick={(e) => e.stopPropagation()}
-                style={{ maxWidth: 640, width: '92vw' }}
+                style={{
+                    maxWidth: 860,
+                    width: '94vw',
+                    maxHeight: '90vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflowY: 'auto',
+                }}
             >
                 <h2>GitLab issues</h2>
 
@@ -2350,7 +2357,7 @@ function GitLabPickerModal({
                                 <div
                                     style={{
                                         marginTop: 10,
-                                        maxHeight: 280,
+                                        maxHeight: 'min(52vh, 460px)',
                                         overflowY: 'auto',
                                         display: 'flex',
                                         flexDirection: 'column',
@@ -2400,6 +2407,20 @@ function GitLabPickerModal({
                                         );
                                     })}
                                 </div>
+                                {issues.length >= 100 && (
+                                    <div className="hint">
+                                        Eerste 100 issues getoond — verfijn met
+                                        een milestone, label, iteration of
+                                        zoekterm om de rest te zien.
+                                    </div>
+                                )}
+                                {selectedList.length > 0 && (
+                                    <div className="hint">
+                                        {selectedList.length} geselecteerd
+                                        (selectie blijft bewaard als je de
+                                        filters aanpast).
+                                    </div>
+                                )}
                             </>
                         )}
 

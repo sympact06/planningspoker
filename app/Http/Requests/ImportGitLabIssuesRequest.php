@@ -28,7 +28,7 @@ class ImportGitLabIssuesRequest extends FormRequest
             'issues.*.iid' => ['required', 'integer', 'min:1'],
             'issues.*.title' => ['required', 'string', 'max:255'],
             'issues.*.web_url' => ['nullable', 'string', 'max:2048'],
-            'issues.*.reference' => ['nullable', 'string', 'max:50'],
+            'issues.*.reference' => ['nullable', 'string', 'max:255'],
         ];
     }
 }

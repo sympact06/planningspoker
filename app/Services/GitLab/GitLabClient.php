@@ -32,7 +32,7 @@ final class GitLabClient
             'membership' => true,
             'simple' => true,
             'order_by' => 'last_activity_at',
-            'per_page' => 30,
+            'per_page' => 100,
             'search' => filled($search) ? $search : null,
         ]));
 
@@ -137,7 +137,7 @@ final class GitLabClient
         $response = $this->request()->get("/projects/{$projectId}/issues", array_filter([
             'state' => 'opened',
             'with_labels_details' => false,
-            'per_page' => 50,
+            'per_page' => 100,
             'order_by' => 'updated_at',
             'milestone' => $filters['milestone'] ?? null,
             'labels' => $filters['labels'] ?? null,

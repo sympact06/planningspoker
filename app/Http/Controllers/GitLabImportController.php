@@ -64,17 +64,20 @@ class GitLabImportController extends Controller
     }
 
     /**
-     * A short, unique-per-room display key for the story, capped at the column
-     * length. Falls back to "#iid" when no full reference is given.
+     * A display key for the story. GitLab references (e.g. "group/project#42")
+     * are globally unique, so they make a good per-room key — but only when
+     * they fit the column. Longer references fall back to null; the UI then
+     * derives "#iid" from the stored GitLab fields, and the (room_id, key)
+     * unique index still permits multiple null keys.
      *
      * @param  array{iid: int, reference?: string|null}  $issue
      */
-    private function referenceFor(array $issue): string
+    private function referenceFor(array $issue): ?string
     {
         $reference = filled($issue['reference'] ?? null)
             ? (string) $issue['reference']
             : '#'.$issue['iid'];
 
-        return mb_substr($reference, 0, 50);
+        return mb_strlen($reference) <= 50 ? $reference : null;
     }
 }
