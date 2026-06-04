@@ -1,6 +1,5 @@
 import { createInertiaApp } from '@inertiajs/react';
 import { configureEcho } from '@laravel/echo-react';
-import Clarity from '@microsoft/clarity';
 import ClarityIdentify from '@/components/clarity-identify';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -8,6 +7,7 @@ import { initializeTheme } from '@/hooks/use-appearance';
 import AppLayout from '@/layouts/app-layout';
 import AuthLayout from '@/layouts/auth-layout';
 import SettingsLayout from '@/layouts/settings/layout';
+import { initClarity } from '@/lib/clarity';
 
 configureEcho({
     broadcaster: 'reverb',
@@ -16,11 +16,7 @@ configureEcho({
 const appName = import.meta.env.VITE_APP_NAME || 'Planning Poker';
 
 // Initialize Microsoft Clarity analytics (browser only, when a project ID is set).
-const clarityProjectId = import.meta.env.VITE_CLARITY_PROJECT_ID;
-
-if (typeof window !== 'undefined' && clarityProjectId) {
-    Clarity.init(clarityProjectId);
-}
+initClarity();
 
 createInertiaApp({
     title: (title) => (title ? `${title} - ${appName}` : appName),

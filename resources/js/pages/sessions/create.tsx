@@ -26,6 +26,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { prioritizeRecording, trackEvent } from '@/lib/clarity';
 import { parseStoryText } from '@/lib/stories';
 import { dashboard } from '@/routes';
 import type { StoryInput, TeamSummary } from '@/types';
@@ -62,6 +63,10 @@ export default function CreateSession({ teams }: CreateSessionProps) {
         }));
         form.post(storeSession().url, {
             preserveScroll: true,
+            onSuccess: () => {
+                trackEvent('session_created');
+                prioritizeRecording('session-created');
+            },
         });
     }
 

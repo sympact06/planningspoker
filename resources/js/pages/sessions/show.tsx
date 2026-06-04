@@ -35,6 +35,11 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import {
+    prioritizeRecording,
+    setClarityTag,
+    trackEvent,
+} from '@/lib/clarity';
 import { parseStoryText, voteLabel } from '@/lib/stories';
 import { dashboard } from '@/routes';
 import type {
@@ -64,7 +69,9 @@ export default function ShowSession({ session }: ShowSessionProps) {
         if (typeof navigator === 'undefined' || !navigator.clipboard) {
             return;
         }
+
         navigator.clipboard.writeText(session.invite_url).then(() => {
+            trackEvent('invite_copied');
             setInviteCopied(true);
             window.setTimeout(() => setInviteCopied(false), 2000);
         });
@@ -125,6 +132,13 @@ export default function ShowSession({ session }: ShowSessionProps) {
         });
     }, [channel, session.id]);
 
+    useEffect(() => {
+        setClarityTag(
+            'session_role',
+            session.can.facilitate ? 'facilitator' : 'participant',
+        );
+    }, [session.can.facilitate]);
+
     const startRoundForm = useForm<{ story_id: number }>({ story_id: 0 });
     const voteForm = useForm<{ value: string }>({ value: '' });
     const emptyForm = useForm({});
@@ -147,7 +161,10 @@ export default function ShowSession({ session }: ShowSessionProps) {
         storyForm.transform(() => ({ stories }));
         storyForm.post(storeStory.url(session.id), {
             preserveScroll: true,
-            onSuccess: () => setStoryText(''),
+            onSuccess: () => {
+                trackEvent('story_added');
+                setStoryText('');
+            },
         });
     }
 
@@ -155,6 +172,7 @@ export default function ShowSession({ session }: ShowSessionProps) {
         startRoundForm.transform(() => ({ story_id: storyId }));
         startRoundForm.post(startRound.url(session.id), {
             preserveScroll: true,
+            onSuccess: () => trackEvent('round_started'),
         });
     }
 
@@ -162,6 +180,7 @@ export default function ShowSession({ session }: ShowSessionProps) {
         voteForm.transform(() => ({ value }));
         voteForm.post(castVote.url(session.id), {
             preserveScroll: true,
+            onSuccess: () => trackEvent('vote_cast'),
         });
     }
 
@@ -171,7 +190,10 @@ export default function ShowSession({ session }: ShowSessionProps) {
                 planningSession: session.id,
                 votingRound: currentRound.id,
             }),
-            { preserveScroll: true },
+            {
+                preserveScroll: true,
+                onSuccess: () => trackEvent('cards_revealed'),
+            },
         );
     }
 
@@ -181,7 +203,10 @@ export default function ShowSession({ session }: ShowSessionProps) {
                 planningSession: session.id,
                 votingRound: currentRound.id,
             }),
-            { preserveScroll: true },
+            {
+                preserveScroll: true,
+                onSuccess: () => trackEvent('round_revote'),
+            },
         );
     }
 
@@ -194,13 +219,20 @@ export default function ShowSession({ session }: ShowSessionProps) {
                 planningSession: session.id,
                 votingRound: currentRound.id,
             }),
-            { preserveScroll: true },
+            {
+                preserveScroll: true,
+                onSuccess: () => trackEvent('estimate_accepted'),
+            },
         );
     }
 
     function complete() {
         emptyForm.post(completeSession.url(session.id), {
             preserveScroll: true,
+            onSuccess: () => {
+                trackEvent('session_completed');
+                prioritizeRecording('session-completed');
+            },
         });
     }
 
