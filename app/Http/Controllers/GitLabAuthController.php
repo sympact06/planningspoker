@@ -26,7 +26,7 @@ class GitLabAuthController extends Controller
 
         $request->session()->put(self::SESSION_KEY, $room->code);
 
-        return Socialite::driver('gitlab')->scopes(['api'])->redirect();
+        return Socialite::driver('gitlab')->setScopes(['api'])->redirect();
     }
 
     /**
