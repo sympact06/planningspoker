@@ -1715,46 +1715,52 @@ function SetupView({
                             </li>
                         ))}
                     </ol>
-
-                    <div className="start-panel">
-                        <p className="start-hint">
-                            Nog één stap — wie ben jij?
-                        </p>
-                        <label className="name-field">
-                            <span className="field-label">
-                                Jouw naam (host)
-                            </span>
-                            <input
-                                className="name-input"
-                                placeholder="bv. Olivier"
-                                value={hostName}
-                                maxLength={50}
-                                onChange={(e) => setHostName(e.target.value)}
-                            />
-                        </label>
-                        <label className="name-field">
-                            <span className="field-label">
-                                Sessienaam (optioneel)
-                            </span>
-                            <input
-                                className="name-input"
-                                placeholder="bv. Sprint 42"
-                                value={sessionName}
-                                maxLength={255}
-                                onChange={(e) => setSessionName(e.target.value)}
-                            />
-                        </label>
-                        <button
-                            className="btn btn-primary"
-                            onClick={onStart}
-                            disabled={submitting}
-                        >
-                            {submitting ? 'Bezig…' : 'Start sessie'}{' '}
-                            <Icon name="chevronRight" size={16} />
-                        </button>
-                    </div>
                 </div>
             )}
+
+            <div className="card pending">
+                <div className="start-panel">
+                    <p className="start-hint">
+                        {stories.length > 0
+                            ? 'Nog één stap — wie ben jij?'
+                            : 'Geen items nodig om te starten — maak een lege room en importeer straks issues uit GitLab.'}
+                    </p>
+                    <label className="name-field">
+                        <span className="field-label">Jouw naam (host)</span>
+                        <input
+                            className="name-input"
+                            placeholder="bv. Olivier"
+                            value={hostName}
+                            maxLength={50}
+                            onChange={(e) => setHostName(e.target.value)}
+                        />
+                    </label>
+                    <label className="name-field">
+                        <span className="field-label">
+                            Sessienaam (optioneel)
+                        </span>
+                        <input
+                            className="name-input"
+                            placeholder="bv. Sprint 42"
+                            value={sessionName}
+                            maxLength={255}
+                            onChange={(e) => setSessionName(e.target.value)}
+                        />
+                    </label>
+                    <button
+                        className="btn btn-primary"
+                        onClick={onStart}
+                        disabled={submitting}
+                    >
+                        {submitting
+                            ? 'Bezig…'
+                            : stories.length > 0
+                              ? 'Start sessie'
+                              : 'Start lege room'}{' '}
+                        <Icon name="chevronRight" size={16} />
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
