@@ -2,6 +2,10 @@
 
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PlanningSessionController;
+use App\Http\Controllers\RoomController;
+use App\Http\Controllers\RoomRoundController;
+use App\Http\Controllers\RoomStoryController;
+use App\Http\Controllers\RoomVoteController;
 use App\Http\Controllers\SessionStoryController;
 use App\Http\Controllers\VoteController;
 use App\Http\Controllers\VotingRoundController;
@@ -9,6 +13,20 @@ use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 Route::get('/', fn () => Inertia::render('poker'))->name('home');
+
+/*
+ * Anonymous, realtime planning poker rooms (no account required). The 3D page
+ * at "/" creates a room; players join via a shareable link and their name.
+ */
+Route::post('rooms', [RoomController::class, 'store'])->name('rooms.store');
+Route::get('rooms/{room}', [RoomController::class, 'show'])->name('rooms.show');
+Route::post('rooms/{room}/join', [RoomController::class, 'join'])->name('rooms.join');
+Route::post('rooms/{room}/stories', [RoomStoryController::class, 'store'])->name('rooms.stories.store');
+Route::post('rooms/{room}/rounds', [RoomRoundController::class, 'store'])->name('rooms.rounds.store');
+Route::post('rooms/{room}/votes', [RoomVoteController::class, 'store'])->name('rooms.votes.store');
+Route::post('rooms/{room}/rounds/{roomRound}/reveal', [RoomRoundController::class, 'reveal'])->name('rooms.rounds.reveal');
+Route::post('rooms/{room}/rounds/{roomRound}/accept', [RoomRoundController::class, 'accept'])->name('rooms.rounds.accept');
+Route::post('rooms/{room}/rounds/{roomRound}/revote', [RoomRoundController::class, 'revote'])->name('rooms.rounds.revote');
 
 Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');

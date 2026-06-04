@@ -15,7 +15,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withBroadcasting(
         __DIR__.'/../routes/channels.php',
-        ['middleware' => ['web', 'auth']],
+        // "web" only (no "auth") so anonymous room participants can authorize
+        // their presence channel. Authenticated channels stay protected by
+        // returning false for guests inside routes/channels.php.
+        ['middleware' => ['web']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);

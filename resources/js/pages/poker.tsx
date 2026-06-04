@@ -1,11 +1,28 @@
 // ============================================================
 // Planning Poker 3D — React UI overlay. Drives the three.js
 // PokerScene and animates the UI with motion.
-// Ported from the Claude Design prototype (app3d.jsx).
+//
+// Three modes, switched on the optional `room` Inertia prop:
+//   1. no room              → create-room view (the "/" landing)
+//   2. room without `me`     → join gate (enter your name)
+//   3. room with `me`        → the real, Reverb-backed session
 // ============================================================
-import { Head } from '@inertiajs/react';
+import { Head, router } from '@inertiajs/react';
+import { useEchoPresence } from '@laravel/echo-react';
 import { animate, stagger } from 'motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+    join as joinRoomAction,
+    store as createRoom,
+} from '@/actions/App/Http/Controllers/RoomController';
+import {
+    accept as acceptRoundAction,
+    reveal as revealRoundAction,
+    revote as revoteRoundAction,
+    store as startRoundAction,
+} from '@/actions/App/Http/Controllers/RoomRoundController';
+import { store as storeStoriesAction } from '@/actions/App/Http/Controllers/RoomStoryController';
+import { store as castVoteAction } from '@/actions/App/Http/Controllers/RoomVoteController';
 import { Icon } from '@/components/poker-icon';
 import { PokerScene } from '@/lib/poker-scene';
 import './poker.css';
@@ -13,32 +30,54 @@ import './poker.css';
 const FIB = ['0', '1', '2', '3', '5', '8', '13', '21', '?', '☕'];
 const FIB_NUMS = [0, 1, 2, 3, 5, 8, 13, 21];
 
-type Player = {
-    id: string;
+type RoomPlayer = {
+    id: number;
     name: string;
     color: string;
-    host?: boolean;
-    you?: boolean;
+    is_host: boolean;
+    has_voted: boolean;
+    vote: string | null;
 };
 
-type Story = {
-    key: string;
+type RoomStory = {
+    id: number;
+    key: string | null;
     title: string;
-    estimate: number | null;
-    done: boolean;
+    position: number;
+    status: 'pending' | 'estimated';
+    final_estimate: string | null;
 };
 
-type Votes = Record<string, string | undefined>;
+type RoomRound = {
+    id: number;
+    story_id: number;
+    status: 'intro' | 'voting' | 'revealed' | 'accepted';
+    shows_votes: boolean;
+    suggested_estimate: string | null;
+};
+
+type RoomMe = {
+    id: number;
+    name: string;
+    color: string;
+    is_host: boolean;
+};
+
+type RoomData = {
+    code: string;
+    name: string;
+    status: 'active' | 'completed';
+    invite_url: string;
+    current_story_id: number | null;
+    stories: RoomStory[];
+    players: RoomPlayer[];
+    current_round: RoomRound | null;
+    stats: { total_stories: number; estimated_stories: number };
+    me: RoomMe | null;
+    vote_values: string[];
+};
 
 type Consensus = { pct: number; label: string; emoji: string };
-
-const PLAYERS: Player[] = [
-    { id: 'p1', name: 'Olivier', color: '#2f7bf6', host: true },
-    { id: 'p2', name: 'Tim', color: '#16a34a' },
-    { id: 'p3', name: 'Sanne', color: '#f59e0b' },
-    { id: 'p4', name: 'Maya', color: '#a855f7' },
-    { id: 'p5', name: 'Russell', color: '#ef4444', you: true },
-];
 
 const EASE: [number, number, number, number] = [0.2, 0.8, 0.2, 1];
 
@@ -51,12 +90,20 @@ function mAnimate(
         return;
     }
 
-    // motion accepts a single element, a NodeList, or an array of elements
     return animate(target as never, keyframes as never, options as never);
 }
 
-function fmtTime(s: number) {
-    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+/** Server stores '☕' as 'coffee'. Map both ways for display/submit. */
+function displayVote(value: string | null | undefined): string | null {
+    if (value == null) {
+        return null;
+    }
+
+    return value === 'coffee' ? '☕' : value;
+}
+
+function toServerValue(card: string): string {
+    return card === '☕' ? 'coffee' : card;
 }
 
 function parseCsv(text: string): { key: string | null; title: string }[] {
@@ -83,7 +130,7 @@ function parseCsv(text: string): { key: string | null; title: string }[] {
         .filter((s) => s.title);
 }
 
-export default function Poker() {
+function useTheme() {
     const [theme, setTheme] = useState<'light' | 'dark'>(
         () =>
             (typeof localStorage !== 'undefined' &&
@@ -91,46 +138,273 @@ export default function Poker() {
             'dark',
     );
 
-    const [phase, setPhase] = useState<'setup' | 'playing' | 'complete'>(
-        'setup',
+    useEffect(() => {
+        localStorage.setItem('pp-theme', theme);
+    }, [theme]);
+
+    return [theme, setTheme] as const;
+}
+
+export default function Poker({ room }: { room?: RoomData }) {
+    if (!room) {
+        return <CreateRoomView />;
+    }
+
+    if (!room.me) {
+        return <JoinRoomView room={room} />;
+    }
+
+    return <RoomSession key={room.code} room={room} me={room.me} />;
+}
+
+/* ─── Create room (landing on "/") ─── */
+function CreateRoomView() {
+    const [theme, setTheme] = useTheme();
+    const [stories, setStories] = useState<
+        { key: string | null; title: string }[]
+    >([]);
+    const [hostName, setHostName] = useState('');
+    const [sessionName, setSessionName] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+
+    const addStories = (items: { key?: string | null; title: string }[]) =>
+        setStories((prev) => [
+            ...prev,
+            ...items.map((s) => ({ key: s.key ?? null, title: s.title })),
+        ]);
+
+    const start = () => {
+        if (!stories.length || submitting) {
+            return;
+        }
+
+        setSubmitting(true);
+        router.post(
+            createRoom().url,
+            {
+                name: sessionName.trim() || 'Planning Poker',
+                host_name: hostName.trim() || 'Host',
+                stories,
+            },
+            { onFinish: () => setSubmitting(false) },
+        );
+    };
+
+    return (
+        <div className="pp3d" data-theme={theme}>
+            <Head title="Planning Poker" />
+            <div className="app">
+                <Topbar theme={theme} setTheme={setTheme} phase="setup" />
+                <main className="stage">
+                    <SetupView
+                        stories={stories}
+                        hostName={hostName}
+                        setHostName={setHostName}
+                        sessionName={sessionName}
+                        setSessionName={setSessionName}
+                        submitting={submitting}
+                        onAdd={addStories}
+                        onRemove={(i) =>
+                            setStories((p) => p.filter((_, x) => x !== i))
+                        }
+                        onStart={start}
+                    />
+                </main>
+            </div>
+        </div>
     );
-    const [stage, setStage] = useState<
-        'intro' | 'voting' | 'flipping' | 'revealed'
-    >('intro');
-    const [stories, setStories] = useState<Story[]>([]);
-    const [activeIdx, setActiveIdx] = useState(0);
-    const activeStory = stories[activeIdx];
-    const players = PLAYERS;
-    const me = useMemo(() => players.find((p) => p.you)!, [players]);
+}
 
-    const [votes, setVotes] = useState<Votes>({});
-    const myVote = votes[me.id];
+/* ─── Join gate ─── */
+function JoinRoomView({ room }: { room: RoomData }) {
+    const [theme, setTheme] = useTheme();
+    const [name, setName] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
 
-    const [timerRunning, setTimerRunning] = useState(false);
-    const [timerSec, setTimerSec] = useState(0);
+    useEffect(() => {
+        if (ref.current) {
+            mAnimate(
+                ref.current,
+                { opacity: [0, 1], y: [18, 0], scale: [0.96, 1] },
+                { duration: 0.5, ease: EASE },
+            );
+        }
+    }, []);
+
+    const submit = () => {
+        if (!name.trim() || submitting) {
+            return;
+        }
+
+        setSubmitting(true);
+        router.post(
+            joinRoomAction(room.code).url,
+            { name: name.trim() },
+            { onFinish: () => setSubmitting(false) },
+        );
+    };
+
+    return (
+        <div className="pp3d" data-theme={theme}>
+            <Head title={`Meedoen · ${room.name}`} />
+            <div className="app">
+                <Topbar theme={theme} setTheme={setTheme} phase="setup" />
+                <main className="stage">
+                    <div className="setup">
+                        <div className="intro-card" ref={ref} style={{ margin: 'auto' }}>
+                            <span className="badge primary">Je bent uitgenodigd</span>
+                            <h1 className="intro-title">{room.name}</h1>
+                            <p style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                {room.players.length} aan tafel · geen account nodig
+                            </p>
+                            <div className="intro-divider"></div>
+                            <input
+                                className="input"
+                                placeholder="Vul je naam in"
+                                value={name}
+                                maxLength={50}
+                                autoFocus
+                                onChange={(e) => setName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        submit();
+                                    }
+                                }}
+                            />
+                            <button
+                                className="btn btn-primary btn-lg"
+                                onClick={submit}
+                                disabled={!name.trim() || submitting}
+                                style={{ width: '100%' }}
+                            >
+                                {submitting ? 'Bezig…' : 'Deelnemen'}{' '}
+                                <Icon name="chevronRight" size={16} />
+                            </button>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    );
+}
+
+/* ─── Live session ─── */
+function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
+    const [theme, setTheme] = useTheme();
+    const [myVote, setMyVote] = useState<string | undefined>(undefined);
+    const [pending, setPending] = useState(false);
+    const [onlineIds, setOnlineIds] = useState<Set<number>>(new Set());
+    const [playersOpen, setPlayersOpen] = useState(false);
+    const [inviteOpen, setInviteOpen] = useState(false);
+    const [manageOpen, setManageOpen] = useState(false);
+
+    const { players, stories, current_round: round } = room;
+    const isHost = me.is_host;
+
+    const activeStory = useMemo(
+        () =>
+            stories.find((s) => s.id === room.current_story_id) ??
+            stories.find((s) => s.status === 'pending') ??
+            stories[stories.length - 1] ??
+            null,
+        [room.current_story_id, stories],
+    );
+
+    const isActiveRound = round != null && round.story_id === activeStory?.id;
+    const stage: 'intro' | 'voting' | 'revealed' = !isActiveRound
+        ? 'intro'
+        : round!.shows_votes
+          ? 'revealed'
+          : 'voting';
+
+    const phase: 'setup' | 'playing' | 'complete' =
+        room.status === 'completed'
+            ? 'complete'
+            : stories.length === 0
+              ? 'setup'
+              : 'playing';
+
+    // reset my local pick whenever the active round changes
+    const roundId = round?.id ?? null;
+    useEffect(() => {
+        setMyVote(undefined);
+    }, [roundId]);
+
+    // ---- realtime ----
+    const { channel } = useEchoPresence<{ code: string }>(
+        `room.${room.code}`,
+        '.room.updated',
+        () => {
+            router.reload({ only: ['room'] });
+        },
+        [room.code],
+    );
+
+    useEffect(() => {
+        const presence = channel();
+
+        if (!presence) {
+            return;
+        }
+
+        presence.here((users: { id: number | string }[]) => {
+            setOnlineIds(new Set(users.map((u) => Number(u.id))));
+        });
+        presence.joining((u: { id: number | string }) => {
+            setOnlineIds((cur) => new Set(cur).add(Number(u.id)));
+        });
+        presence.leaving((u: { id: number | string }) => {
+            setOnlineIds((cur) => {
+                const next = new Set(cur);
+                next.delete(Number(u.id));
+
+                return next;
+            });
+        });
+    }, [channel, room.code]);
+
+    // ---- scene votes (face-down during voting, real on reveal) ----
+    const sceneVotes = useMemo<Record<number, string>>(() => {
+        const out: Record<number, string> = {};
+        players.forEach((p) => {
+            if (stage === 'revealed') {
+                const v = displayVote(p.vote);
+
+                if (v != null) {
+                    out[p.id] = v;
+                }
+            } else if (p.has_voted) {
+                out[p.id] =
+                    p.id === me.id && myVote ? displayVote(myVote)! : '•';
+            }
+        });
+
+        return out;
+    }, [players, stage, me.id, myVote]);
 
     // ---- 3D scene lifecycle ----
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const labelsRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<InstanceType<typeof PokerScene> | null>(null);
 
-    useEffect(() => {
-        localStorage.setItem('pp-theme', theme);
+    const scenePlayers = useMemo(
+        () =>
+            players.map((p) => ({
+                id: p.id,
+                name: p.name,
+                color: p.color,
+                host: p.is_host,
+                you: p.id === me.id,
+            })),
+        [players, me.id],
+    );
 
+    useEffect(() => {
         if (sceneRef.current) {
             sceneRef.current.setTheme(theme);
         }
     }, [theme]);
-
-    useEffect(() => {
-        if (!timerRunning) {
-            return;
-        }
-
-        const id = setInterval(() => setTimerSec((s) => s + 1), 1000);
-
-        return () => clearInterval(id);
-    }, [timerRunning]);
 
     useEffect(() => {
         if (phase !== 'playing' || !canvasRef.current || !labelsRef.current) {
@@ -142,7 +416,7 @@ export default function Poker() {
             labelsRef.current,
             theme,
         );
-        scene.setPlayers(players);
+        scene.setPlayers(scenePlayers);
         sceneRef.current = scene;
 
         return () => {
@@ -152,172 +426,70 @@ export default function Poker() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [phase]);
 
-    // keep scene votes in sync during voting
+    // re-seat when the roster changes
+    const rosterKey = scenePlayers.map((p) => `${p.id}:${p.name}`).join('|');
     useEffect(() => {
-        if (phase === 'playing' && sceneRef.current && stage === 'voting') {
-            sceneRef.current.syncVotes(votes);
-        }
-    }, [votes, stage, phase]);
-
-    // bots vote after you do
-    useEffect(() => {
-        if (phase !== 'playing' || stage !== 'voting' || !myVote) {
-            return;
-        }
-
-        const others = players.filter((p) => !p.you);
-        const timers = others.map((p, i) => {
-            if (votes[p.id]) {
-                return null;
-            }
-
-            return setTimeout(
-                () => {
-                    setVotes((v) => {
-                        if (v[p.id]) {
-                            return v;
-                        }
-
-                        const yn = parseFloat(myVote);
-                        let val: number;
-
-                        if (isNaN(yn)) {
-                            val = FIB_NUMS[1 + Math.floor(Math.random() * 4)];
-                        } else {
-                            const drift = [-1, 0, 0, 1, 2][
-                                Math.floor(Math.random() * 5)
-                            ];
-                            val = FIB_NUMS.reduce(
-                                (pr, c) =>
-                                    Math.abs(c - (yn + drift)) <
-                                    Math.abs(pr - (yn + drift))
-                                        ? c
-                                        : pr,
-                                100,
-                            );
-                        }
-
-                        return { ...v, [p.id]: String(val) };
-                    });
-                },
-                700 + i * 750 + Math.random() * 500,
-            );
-        });
-
-        return () => timers.forEach((t) => t && clearTimeout(t));
+        sceneRef.current?.setPlayers(scenePlayers);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [myVote, stage, phase]);
+    }, [rosterKey]);
 
-    const votedCount = players.filter((p) => votes[p.id] != null).length;
-    const totalVoters = players.length;
-
-    const castVote = (val: string) => {
-        if (stage !== 'voting') {
+    // sync table cards
+    useEffect(() => {
+        if (!sceneRef.current) {
             return;
         }
 
-        setVotes((v) => ({
-            ...v,
-            [me.id]: v[me.id] === val ? undefined : val,
-        }));
-
-        if (!timerRunning) {
-            setTimerRunning(true);
-        }
-    };
-
-    const handleReveal = () => {
-        if (votedCount === 0 || stage === 'flipping') {
-            return;
-        }
-
-        setTimerRunning(false);
-        setStage('flipping');
-
-        if (sceneRef.current) {
-            sceneRef.current.reveal(votes);
-        }
-
-        setTimeout(() => setStage('revealed'), 950);
-    };
-
-    const handleStartVoting = () => {
-        setStage('voting');
-
-        if (sceneRef.current) {
-            sceneRef.current.setCamera('voting');
-        }
-    };
-
-    const handleRevote = () => {
-        setVotes({});
-        setTimerSec(0);
-        setTimerRunning(false);
-        setStage('voting');
-
-        if (sceneRef.current) {
-            sceneRef.current.resetRound();
-        }
-    };
-
-    const goToItem = useCallback((idx: number, asIntro = true) => {
-        setActiveIdx(idx);
-        setVotes({});
-        setTimerSec(0);
-        setTimerRunning(false);
-        setStage(asIntro ? 'intro' : 'voting');
-
-        if (sceneRef.current) {
-            sceneRef.current.resetRound();
-            sceneRef.current.setCamera(asIntro ? 'intro' : 'voting');
-        }
-    }, []);
-
-    const handleAccept = (estimate: number | null) => {
-        setStories((prev) =>
-            prev.map((s, i) =>
-                i === activeIdx ? { ...s, estimate, done: true } : s,
-            ),
-        );
-        const nextIdx = stories.findIndex((s, i) => i > activeIdx && !s.done);
-
-        if (nextIdx >= 0) {
-            goToItem(nextIdx, true);
+        if (stage === 'voting') {
+            sceneRef.current.syncVotes(sceneVotes);
+        } else if (stage === 'revealed') {
+            sceneRef.current.syncVotes(sceneVotes);
+            sceneRef.current.reveal(sceneVotes);
         } else {
-            setVotes({});
-            setActiveIdx(stories.length);
+            sceneRef.current.resetRound();
+            sceneRef.current.setCamera('intro');
         }
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sceneVotes, stage, roundId]);
 
-    // ---- stats ----
+    // ---- stats (revealed only) ----
     const numeric = useMemo(
         () =>
-            Object.values(votes)
-                .filter((v) => v != null && !isNaN(parseFloat(v)))
-                .map(Number),
-        [votes],
+            stage === 'revealed'
+                ? players
+                      .map((p) => p.vote)
+                      .filter((v) => v != null && !isNaN(parseFloat(v!)))
+                      .map(Number)
+                : [],
+        [players, stage],
     );
     const avg = numeric.length
         ? numeric.reduce((a, b) => a + b, 0) / numeric.length
         : 0;
     const avgFmt = numeric.length ? avg.toFixed(1) : '—';
-    const suggested = numeric.length
-        ? FIB_NUMS.reduce(
-              (p, c) => (Math.abs(c - avg) < Math.abs(p - avg) ? c : p),
-              100,
-          )
-        : null;
+    const suggested = round?.suggested_estimate
+        ? Number(round.suggested_estimate)
+        : numeric.length
+          ? FIB_NUMS.reduce(
+                (p, c) => (Math.abs(c - avg) < Math.abs(p - avg) ? c : p),
+                100,
+            )
+          : null;
     const dist = useMemo(() => {
         const d: Record<string, number> = {};
         FIB.forEach((v) => (d[v] = 0));
-        Object.values(votes).forEach((v) => {
-            if (v != null) {
-                d[v] = (d[v] || 0) + 1;
-            }
-        });
+
+        if (stage === 'revealed') {
+            players.forEach((p) => {
+                const v = displayVote(p.vote);
+
+                if (v != null) {
+                    d[v] = (d[v] || 0) + 1;
+                }
+            });
+        }
 
         return d;
-    }, [votes]);
+    }, [players, stage]);
     const maxDist = Math.max(1, ...Object.values(dist));
     const consensus = useMemo<Consensus>(() => {
         if (!numeric.length) {
@@ -346,81 +518,82 @@ export default function Poker() {
         return { pct, label: 'Geen consensus', emoji: '😬' };
     }, [numeric]);
 
-    // ---- setup helpers ----
-    const addStories = (items: { key?: string | null; title: string }[]) =>
-        setStories((prev) => {
-            const start = prev.length;
-
-            return [
-                ...prev,
-                ...items.map((s, i) => ({
-                    key:
-                        s.key ||
-                        `POK-${String(101 + start + i).padStart(3, '0')}`,
-                    title: s.title,
-                    estimate: null,
-                    done: false,
-                })),
-            ];
+    // ---- actions ----
+    const post = useCallback((url: string, data: Record<string, string | number | null> = {}) => {
+        router.post(url, data, {
+            preserveScroll: true,
+            preserveState: true,
+            only: ['room'],
+            onStart: () => setPending(true),
+            onFinish: () => setPending(false),
         });
-    const startSession = () => {
-        if (!stories.length) {
+    }, []);
+
+    const handleVote = (card: string) => {
+        if (stage !== 'voting') {
             return;
         }
 
-        const first = stories.findIndex((s) => !s.done);
-        setActiveIdx(first >= 0 ? first : 0);
-        setStage('intro');
-        setPhase('playing');
-    };
-    const resetAll = () => {
-        setStories([]);
-        setVotes({});
-        setActiveIdx(0);
-        setTimerSec(0);
-        setTimerRunning(false);
-        setStage('intro');
-        setPhase('setup');
+        setMyVote(card);
+        post(castVoteAction(room.code).url, { value: toServerValue(card) });
     };
 
-    const allDone = stories.length > 0 && stories.every((s) => s.done);
-    useEffect(() => {
-        // Advance to the completion screen once every item has an estimate and
-        // the active index has run past the end of the list.
-        if (phase === 'playing' && allDone && activeIdx >= stories.length) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            setPhase('complete');
+    const handleStartVoting = () => {
+        if (!isHost || !activeStory) {
+            return;
         }
-    }, [activeIdx, allDone, phase, stories.length]);
 
-    const [playersOpen, setPlayersOpen] = useState(false);
-    const [inviteOpen, setInviteOpen] = useState(false);
+        post(startRoundAction(room.code).url, { story_id: activeStory.id });
+    };
+
+    const handleReveal = () => {
+        if (!isHost || !round) {
+            return;
+        }
+
+        post(revealRoundAction({ room: room.code, roomRound: round.id }).url);
+    };
+
+    const handleRevote = () => {
+        if (!isHost || !round) {
+            return;
+        }
+
+        post(revoteRoundAction({ room: room.code, roomRound: round.id }).url);
+    };
+
+    const handleAccept = () => {
+        if (!isHost || !round) {
+            return;
+        }
+
+        post(acceptRoundAction({ room: room.code, roomRound: round.id }).url, {
+            estimate: suggested != null ? String(suggested) : null,
+        });
+    };
+
+    const handleSelectStory = (story: RoomStory) => {
+        if (!isHost) {
+            return;
+        }
+
+        post(startRoundAction(room.code).url, { story_id: story.id });
+    };
+
+    const votedCount = players.filter((p) => p.has_voted).length;
 
     return (
         <div className="pp3d" data-theme={theme}>
-            <Head title="Planning Poker">
-                <link rel="preconnect" href="https://fonts.googleapis.com" />
-                <link
-                    rel="preconnect"
-                    href="https://fonts.gstatic.com"
-                    crossOrigin=""
-                />
-                <link
-                    href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;600;700&display=swap"
-                    rel="stylesheet"
-                />
-            </Head>
+            <Head title={`${room.name} · Planning Poker`} />
 
             <div className="app">
                 <Topbar
                     theme={theme}
                     setTheme={setTheme}
                     phase={phase}
-                    timerRunning={timerRunning}
-                    timerSec={timerSec}
-                    onTimer={() => setTimerRunning((r) => !r)}
                     players={players}
-                    votes={votes}
+                    onlineIds={onlineIds}
+                    sceneVotes={sceneVotes}
                     revealed={stage === 'revealed'}
                     playersOpen={playersOpen}
                     setPlayersOpen={setPlayersOpen}
@@ -429,14 +602,11 @@ export default function Poker() {
 
                 <Sidebar
                     stories={stories}
+                    currentStoryId={room.current_story_id}
                     phase={phase}
-                    activeIdx={activeIdx}
-                    onSelect={(i) => {
-                        if (phase === 'playing') {
-                            goToItem(i, true);
-                        }
-                    }}
-                    onManage={() => setPhase('setup')}
+                    isHost={isHost}
+                    onSelect={handleSelectStory}
+                    onManage={() => setManageOpen(true)}
                 />
 
                 <main className="stage">
@@ -448,31 +618,43 @@ export default function Poker() {
                     )}
 
                     {phase === 'setup' && (
-                        <SetupView
-                            stories={stories}
-                            onAdd={addStories}
-                            onRemove={(i) =>
-                                setStories((p) => p.filter((_, x) => x !== i))
-                            }
-                            onStart={startSession}
-                        />
+                        <div className="setup">
+                            <div className="intro-card" style={{ margin: 'auto' }}>
+                                <span className="badge primary">Lobby</span>
+                                <h1 className="intro-title">{room.name}</h1>
+                                <p style={{ color: 'hsl(var(--muted-foreground))' }}>
+                                    {isHost
+                                        ? 'Voeg items toe om de sessie te starten.'
+                                        : 'Wachten tot de host items toevoegt…'}
+                                </p>
+                                {isHost && (
+                                    <button
+                                        className="btn btn-primary btn-lg"
+                                        onClick={() => setManageOpen(true)}
+                                    >
+                                        <Icon name="plus" size={16} /> Items
+                                        toevoegen
+                                    </button>
+                                )}
+                            </div>
+                        </div>
                     )}
 
                     {phase === 'complete' && (
-                        <CompleteView stories={stories} onRestart={resetAll} />
+                        <CompleteView stories={stories} />
                     )}
 
                     {phase === 'playing' && activeStory && (
                         <PlayHUD
                             stage={stage}
+                            isHost={isHost}
+                            pending={pending}
                             activeStory={activeStory}
-                            activeIdx={activeIdx}
-                            totalStories={stories.length}
-                            doneCount={stories.filter((s) => s.done).length}
+                            stories={stories}
                             votedCount={votedCount}
-                            totalVoters={totalVoters}
+                            totalVoters={players.length}
                             myVote={myVote}
-                            onVote={castVote}
+                            onVote={handleVote}
                             onReveal={handleReveal}
                             onStartVoting={handleStartVoting}
                             onRevote={handleRevote}
@@ -487,7 +669,19 @@ export default function Poker() {
                 </main>
             </div>
 
-            {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
+            {inviteOpen && (
+                <InviteModal
+                    inviteUrl={room.invite_url}
+                    onClose={() => setInviteOpen(false)}
+                />
+            )}
+
+            {manageOpen && (
+                <ManageStoriesModal
+                    code={room.code}
+                    onClose={() => setManageOpen(false)}
+                />
+            )}
         </div>
     );
 }
@@ -497,11 +691,9 @@ function Topbar({
     theme,
     setTheme,
     phase,
-    timerRunning,
-    timerSec,
-    onTimer,
     players,
-    votes,
+    onlineIds,
+    sceneVotes,
     revealed,
     playersOpen,
     setPlayersOpen,
@@ -510,15 +702,13 @@ function Topbar({
     theme: 'light' | 'dark';
     setTheme: (t: 'light' | 'dark') => void;
     phase: string;
-    timerRunning: boolean;
-    timerSec: number;
-    onTimer: () => void;
-    players: Player[];
-    votes: Votes;
-    revealed: boolean;
-    playersOpen: boolean;
-    setPlayersOpen: React.Dispatch<React.SetStateAction<boolean>>;
-    onInvite: () => void;
+    players?: RoomPlayer[];
+    onlineIds?: Set<number>;
+    sceneVotes?: Record<number, string>;
+    revealed?: boolean;
+    playersOpen?: boolean;
+    setPlayersOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+    onInvite?: () => void;
 }) {
     return (
         <header className="topbar">
@@ -527,34 +717,27 @@ function Topbar({
                     <Icon name="cube" size={16} />
                 </div>
                 <span className="brand-name">Planning Poker</span>
-                <span className="brand-sub">Sprint 42 · Grooming</span>
             </div>
             <div className="spacer"></div>
 
-            {phase === 'playing' && (
-                <button
-                    className={'badge mono' + (timerRunning ? ' primary' : '')}
-                    style={{ height: 36, padding: '0 12px', cursor: 'pointer' }}
-                    onClick={onTimer}
-                >
-                    <Icon name={timerRunning ? 'pause' : 'play'} size={12} />
-                    {fmtTime(timerSec)}
-                </button>
+            {players && setPlayersOpen && (
+                <PlayersDropdown
+                    open={playersOpen ?? false}
+                    setOpen={setPlayersOpen}
+                    players={players}
+                    onlineIds={onlineIds ?? new Set()}
+                    sceneVotes={sceneVotes ?? {}}
+                    revealed={revealed ?? false}
+                    phase={phase}
+                    onInvite={onInvite}
+                />
             )}
 
-            <PlayersDropdown
-                open={playersOpen}
-                setOpen={setPlayersOpen}
-                players={players}
-                votes={votes}
-                revealed={revealed}
-                phase={phase}
-                onInvite={onInvite}
-            />
-
-            <button className="btn btn-primary" onClick={onInvite}>
-                <Icon name="invite" size={16} /> Uitnodigen
-            </button>
+            {onInvite && (
+                <button className="btn btn-primary" onClick={onInvite}>
+                    <Icon name="invite" size={16} /> Uitnodigen
+                </button>
+            )}
 
             <div className="theme-switch" role="group" aria-label="Thema">
                 <button
@@ -580,18 +763,20 @@ function PlayersDropdown({
     open,
     setOpen,
     players,
-    votes,
+    onlineIds,
+    sceneVotes,
     revealed,
     phase,
     onInvite,
 }: {
     open: boolean;
     setOpen: React.Dispatch<React.SetStateAction<boolean>>;
-    players: Player[];
-    votes: Votes;
+    players: RoomPlayer[];
+    onlineIds: Set<number>;
+    sceneVotes: Record<number, string>;
     revealed: boolean;
     phase: string;
-    onInvite: () => void;
+    onInvite?: () => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -608,7 +793,7 @@ function PlayersDropdown({
 
         return () => document.removeEventListener('mousedown', onClick);
     }, [open, setOpen]);
-    const voted = players.filter((p) => votes[p.id] != null).length;
+    const voted = players.filter((p) => p.has_voted).length;
 
     return (
         <div className="dropdown-host" ref={ref}>
@@ -642,10 +827,8 @@ function PlayersDropdown({
                 <div className="dropdown-panel">
                     <div className="dropdown-head">
                         <span>Aan tafel</span>
-                        <span
-                            style={{ textTransform: 'none', letterSpacing: 0 }}
-                        >
-                            {players.length} online
+                        <span style={{ textTransform: 'none', letterSpacing: 0 }}>
+                            {onlineIds.size} online
                         </span>
                     </div>
                     <div className="players-list">
@@ -657,13 +840,8 @@ function PlayersDropdown({
                                 >
                                     {p.name[0]}
                                 </div>
-                                <span className="name">
-                                    {p.name}
-                                    {p.you && (
-                                        <span className="muted"> (jij)</span>
-                                    )}
-                                </span>
-                                {p.host && (
+                                <span className="name">{p.name}</span>
+                                {p.is_host && (
                                     <span
                                         style={{
                                             color: 'hsl(var(--warning))',
@@ -673,13 +851,18 @@ function PlayersDropdown({
                                         <Icon name="crown" size={13} />
                                     </span>
                                 )}
-                                <span className="online-dot"></span>
+                                <span
+                                    className="online-dot"
+                                    style={{
+                                        opacity: onlineIds.has(p.id) ? 1 : 0.25,
+                                    }}
+                                ></span>
                                 <span
                                     className={
                                         'row-status' +
                                         (phase === 'playing' &&
                                         !revealed &&
-                                        votes[p.id]
+                                        p.has_voted
                                             ? ' voted'
                                             : '')
                                     }
@@ -687,26 +870,29 @@ function PlayersDropdown({
                                     {phase !== 'playing'
                                         ? 'lobby'
                                         : revealed
-                                          ? (votes[p.id] ?? '—')
-                                          : votes[p.id]
+                                          ? (displayVote(p.vote) ?? '—')
+                                          : p.has_voted
                                             ? '✓'
                                             : 'denkt…'}
                                 </span>
                             </div>
                         ))}
                     </div>
-                    <div className="dropdown-foot">
-                        <button
-                            className="btn btn-ghost btn-sm"
-                            style={{
-                                width: '100%',
-                                color: 'hsl(var(--primary))',
-                            }}
-                            onClick={onInvite}
-                        >
-                            <Icon name="invite" size={14} /> Speler uitnodigen
-                        </button>
-                    </div>
+                    {onInvite && (
+                        <div className="dropdown-foot">
+                            <button
+                                className="btn btn-ghost btn-sm"
+                                style={{
+                                    width: '100%',
+                                    color: 'hsl(var(--primary))',
+                                }}
+                                onClick={onInvite}
+                            >
+                                <Icon name="invite" size={14} /> Speler
+                                uitnodigen
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -716,15 +902,17 @@ function PlayersDropdown({
 /* ─── Sidebar ─── */
 function Sidebar({
     stories,
+    currentStoryId,
     phase,
-    activeIdx,
+    isHost,
     onSelect,
     onManage,
 }: {
-    stories: Story[];
+    stories: RoomStory[];
+    currentStoryId: number | null;
     phase: string;
-    activeIdx: number;
-    onSelect: (i: number) => void;
+    isHost: boolean;
+    onSelect: (story: RoomStory) => void;
     onManage: () => void;
 }) {
     const listRef = useRef<HTMLDivElement>(null);
@@ -744,7 +932,7 @@ function Sidebar({
                 <h3>Backlog</h3>
                 <span className="badge">
                     {stories.length
-                        ? `${stories.filter((s) => !s.done).length} open`
+                        ? `${stories.filter((s) => s.status !== 'estimated').length} open`
                         : 'leeg'}
                 </span>
             </div>
@@ -753,39 +941,45 @@ function Sidebar({
                     <div className="empty-hint">
                         Nog geen items.
                         <br />
-                        Voeg items toe om te beginnen.
+                        {isHost
+                            ? 'Voeg items toe om te beginnen.'
+                            : 'Wachten op de host.'}
                     </div>
                 )}
-                {stories.map((s, i) => (
+                {stories.map((s) => (
                     <button
-                        key={s.key}
+                        key={s.id}
                         className={
                             'story-item' +
-                            (phase === 'playing' && i === activeIdx
+                            (phase === 'playing' && s.id === currentStoryId
                                 ? ' active'
                                 : '') +
-                            (s.done ? ' done' : '')
+                            (s.status === 'estimated' ? ' done' : '')
                         }
-                        onClick={() => onSelect(i)}
+                        onClick={() => onSelect(s)}
+                        disabled={!isHost}
                     >
                         <div className="story-check">
-                            {s.done && <Icon name="check" size={11} />}
+                            {s.status === 'estimated' && (
+                                <Icon name="check" size={11} />
+                            )}
                         </div>
                         <div className="story-body">
-                            <span className="story-key">{s.key}</span>
+                            {s.key && <span className="story-key">{s.key}</span>}
                             <div className="story-title">{s.title}</div>
                         </div>
                         <div
                             className={
-                                'story-est' + (s.estimate != null ? ' has' : '')
+                                'story-est' +
+                                (s.final_estimate != null ? ' has' : '')
                             }
                         >
-                            {s.estimate != null ? s.estimate : '—'}
+                            {s.final_estimate != null ? s.final_estimate : '—'}
                         </div>
                     </button>
                 ))}
             </div>
-            {phase === 'playing' && (
+            {phase === 'playing' && isHost && (
                 <div className="sidebar-foot">
                     <button
                         className="btn btn-outline btn-sm"
@@ -799,13 +993,13 @@ function Sidebar({
     );
 }
 
-/* ─── Play HUD (overlays the 3D canvas) ─── */
+/* ─── Play HUD ─── */
 function PlayHUD({
     stage,
+    isHost,
+    pending,
     activeStory,
-    activeIdx,
-    totalStories,
-    doneCount,
+    stories,
     votedCount,
     totalVoters,
     myVote,
@@ -821,10 +1015,10 @@ function PlayHUD({
     consensus,
 }: {
     stage: string;
-    activeStory: Story;
-    activeIdx: number;
-    totalStories: number;
-    doneCount: number;
+    isHost: boolean;
+    pending: boolean;
+    activeStory: RoomStory;
+    stories: RoomStory[];
     votedCount: number;
     totalVoters: number;
     myVote: string | undefined;
@@ -832,13 +1026,16 @@ function PlayHUD({
     onReveal: () => void;
     onStartVoting: () => void;
     onRevote: () => void;
-    onAccept: (v: number | null) => void;
+    onAccept: () => void;
     avgFmt: string;
     suggested: number | null;
     dist: Record<string, number>;
     maxDist: number;
     consensus: Consensus;
 }) {
+    const activeIdx = stories.findIndex((s) => s.id === activeStory.id);
+    const totalStories = stories.length;
+    const doneCount = stories.filter((s) => s.status === 'estimated').length;
     const isIntro = stage === 'intro';
 
     return (
@@ -848,6 +1045,7 @@ function PlayHUD({
                     activeStory={activeStory}
                     activeIdx={activeIdx}
                     totalStories={totalStories}
+                    isHost={isHost}
                     onStart={onStartVoting}
                 />
             )}
@@ -859,7 +1057,9 @@ function PlayHUD({
                             <span className="badge primary">
                                 Item {activeIdx + 1} / {totalStories}
                             </span>
-                            <span className="key">{activeStory.key}</span>
+                            {activeStory.key && (
+                                <span className="key">{activeStory.key}</span>
+                            )}
                         </div>
                         <h2 className="play-title">{activeStory.title}</h2>
                         <div className="play-progress">
@@ -882,27 +1082,29 @@ function PlayHUD({
                             <div className="reveal-cta">
                                 <div className="table-status">
                                     <span className="dot"></span>
-                                    {stage === 'flipping'
-                                        ? 'Kaarten draaien om…'
-                                        : votedCount === 0
-                                          ? 'Kies een kaart'
-                                          : `${votedCount} / ${totalVoters} gestemd`}
+                                    {votedCount === 0
+                                        ? 'Kies een kaart'
+                                        : `${votedCount} / ${totalVoters} gestemd`}
                                 </div>
-                                <button
-                                    className="btn btn-primary btn-lg"
-                                    onClick={onReveal}
-                                    disabled={
-                                        votedCount === 0 || stage === 'flipping'
-                                    }
-                                >
-                                    <Icon name="eye" size={16} />{' '}
-                                    {stage === 'flipping'
-                                        ? 'Onthullen…'
-                                        : 'Onthul kaarten'}
-                                </button>
+                                {isHost ? (
+                                    <button
+                                        className="btn btn-primary btn-lg"
+                                        onClick={onReveal}
+                                        disabled={votedCount === 0 || pending}
+                                    >
+                                        <Icon name="eye" size={16} /> Onthul
+                                        kaarten
+                                    </button>
+                                ) : (
+                                    <div className="table-status">
+                                        Wachten tot de host onthult…
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <ResultsPanel
+                                isHost={isHost}
+                                pending={pending}
                                 avgFmt={avgFmt}
                                 suggested={suggested}
                                 dist={dist}
@@ -915,11 +1117,7 @@ function PlayHUD({
                     </div>
 
                     {stage !== 'revealed' && (
-                        <Dock
-                            myVote={myVote}
-                            onVote={onVote}
-                            disabled={stage === 'flipping'}
-                        />
+                        <Dock myVote={myVote} onVote={onVote} disabled={pending} />
                     )}
                 </div>
             )}
@@ -931,11 +1129,13 @@ function ItemIntro({
     activeStory,
     activeIdx,
     totalStories,
+    isHost,
     onStart,
 }: {
-    activeStory: Story;
+    activeStory: RoomStory;
     activeIdx: number;
     totalStories: number;
+    isHost: boolean;
     onStart: () => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -951,16 +1151,7 @@ function ItemIntro({
             { opacity: [0, 1], y: [18, 0], scale: [0.96, 1] },
             { duration: 0.5, ease: [0.2, 0.7, 0.2, 1] },
         );
-        mAnimate(
-            el.querySelectorAll('.intro-card > *'),
-            { opacity: [0, 1], y: [10, 0] },
-            {
-                duration: 0.45,
-                delay: stagger(0.06, { startDelay: 0.12 }),
-                ease: EASE,
-            },
-        );
-    }, [activeStory.key]);
+    }, [activeStory.id]);
 
     return (
         <div className="intro" ref={ref}>
@@ -968,15 +1159,20 @@ function ItemIntro({
                 <span className="badge primary">
                     Item {activeIdx + 1} van {totalStories}
                 </span>
-                <span className="intro-key">{activeStory.key}</span>
+                {activeStory.key && (
+                    <span className="intro-key">{activeStory.key}</span>
+                )}
                 <h1 className="intro-title">{activeStory.title}</h1>
                 <div className="intro-divider"></div>
-                <button className="btn btn-primary btn-lg" onClick={onStart}>
-                    Begin met stemmen <Icon name="chevronRight" size={16} />
-                </button>
-                <span className="intro-hint">
-                    of kies direct een kaart hieronder
-                </span>
+                {isHost ? (
+                    <button className="btn btn-primary btn-lg" onClick={onStart}>
+                        Begin met stemmen <Icon name="chevronRight" size={16} />
+                    </button>
+                ) : (
+                    <span className="intro-hint">
+                        Wachten tot de host de stemronde start…
+                    </span>
+                )}
             </div>
         </div>
     );
@@ -1026,6 +1222,8 @@ function Dock({
 }
 
 function ResultsPanel({
+    isHost,
+    pending,
     avgFmt,
     suggested,
     dist,
@@ -1034,16 +1232,17 @@ function ResultsPanel({
     onRevote,
     onAccept,
 }: {
+    isHost: boolean;
+    pending: boolean;
     avgFmt: string;
     suggested: number | null;
     dist: Record<string, number>;
     maxDist: number;
     consensus: Consensus;
     onRevote: () => void;
-    onAccept: (v: number | null) => void;
+    onAccept: () => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
-    const avgRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         const el = ref.current;
 
@@ -1057,15 +1256,6 @@ function ResultsPanel({
             { duration: 0.5, ease: EASE },
         );
         mAnimate(
-            el.querySelectorAll('.stat, .dist, .results-actions'),
-            { opacity: [0, 1], y: [12, 0] },
-            {
-                duration: 0.45,
-                delay: stagger(0.07, { startDelay: 0.15 }),
-                ease: EASE,
-            },
-        );
-        mAnimate(
             el.querySelectorAll('.dist-bar'),
             { scaleY: [0, 1] },
             {
@@ -1074,21 +1264,6 @@ function ResultsPanel({
                 ease: EASE,
             },
         );
-        // count-up average
-        const num = parseFloat(avgFmt);
-
-        if (avgRef.current && !isNaN(num)) {
-            animate(0, num, {
-                duration: 0.7,
-                ease: 'easeOut',
-                onUpdate: (v: number) => {
-                    if (avgRef.current) {
-                        avgRef.current.textContent = v.toFixed(1);
-                    }
-                },
-            });
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (
@@ -1096,13 +1271,11 @@ function ResultsPanel({
             <div className="results-stats">
                 <div className="stat">
                     <div className="stat-label">Gemiddelde</div>
-                    <div className="stat-value" ref={avgRef}>
-                        {avgFmt}
-                    </div>
+                    <div className="stat-value">{avgFmt}</div>
                 </div>
                 <div className="stat">
                     <div className="stat-label">Suggestie</div>
-                    <div className="stat-value accent">{suggested}</div>
+                    <div className="stat-value accent">{suggested ?? '—'}</div>
                 </div>
                 <div className="stat">
                     <div className="stat-label">Akkoord</div>
@@ -1119,9 +1292,7 @@ function ResultsPanel({
                     return (
                         <div className="dist-col" key={v}>
                             <div
-                                className={
-                                    'dist-bar' + (c === 0 ? ' zero' : '')
-                                }
+                                className={'dist-bar' + (c === 0 ? ' zero' : '')}
                                 style={{
                                     height: c
                                         ? `${(c / maxDist) * 100}%`
@@ -1135,29 +1306,53 @@ function ResultsPanel({
                     );
                 })}
             </div>
-            <div className="results-actions">
-                <button className="btn btn-outline" onClick={onRevote}>
-                    <Icon name="rotate" size={14} /> Opnieuw stemmen
-                </button>
-                <button
-                    className="btn btn-primary"
-                    onClick={() => onAccept(suggested)}
-                >
-                    Accepteer {suggested} <Icon name="chevronRight" size={14} />
-                </button>
-            </div>
+            {isHost ? (
+                <div className="results-actions">
+                    <button
+                        className="btn btn-outline"
+                        onClick={onRevote}
+                        disabled={pending}
+                    >
+                        <Icon name="rotate" size={14} /> Opnieuw stemmen
+                    </button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={onAccept}
+                        disabled={pending}
+                    >
+                        Accepteer {suggested ?? '—'}{' '}
+                        <Icon name="chevronRight" size={14} />
+                    </button>
+                </div>
+            ) : (
+                <div className="results-actions">
+                    <span className="intro-hint">
+                        Wachten tot de host een schatting accepteert…
+                    </span>
+                </div>
+            )}
         </div>
     );
 }
 
-/* ─── Setup ─── */
+/* ─── Setup (create room) ─── */
 function SetupView({
     stories,
+    hostName,
+    setHostName,
+    sessionName,
+    setSessionName,
+    submitting,
     onAdd,
     onRemove,
     onStart,
 }: {
-    stories: Story[];
+    stories: { key: string | null; title: string }[];
+    hostName: string;
+    setHostName: (v: string) => void;
+    sessionName: string;
+    setSessionName: (v: string) => void;
+    submitting: boolean;
     onAdd: (items: { key?: string | null; title: string }[]) => void;
     onRemove: (i: number) => void;
     onStart: () => void;
@@ -1231,11 +1426,11 @@ function SetupView({
             }}
         >
             <div className="setup-head">
-                <span className="badge primary">Stap 1 van 2</span>
+                <span className="badge primary">Nieuwe sessie</span>
                 <h1>Welke items ga je vandaag inschatten?</h1>
                 <p>
-                    Voeg items handmatig toe of importeer een CSV. Daarna start
-                    je de sessie en komen ze één voor één op de 3D-tafel.
+                    Voeg items toe of importeer een CSV. Daarna maak je een room
+                    aan en deel je de link — niemand hoeft een account.
                 </p>
             </div>
 
@@ -1318,10 +1513,6 @@ function SetupView({
                                         key: 'POK-203',
                                         title: 'Realtime presence in retro board',
                                     },
-                                    {
-                                        key: 'POK-204',
-                                        title: 'Slack: dagelijkse summary van closed items',
-                                    },
                                 ])
                             }
                         >
@@ -1338,20 +1529,38 @@ function SetupView({
                             {stories.length}{' '}
                             {stories.length === 1 ? 'item' : 'items'} klaar
                         </h3>
-                        <button className="btn btn-primary" onClick={onStart}>
-                            Start sessie <Icon name="chevronRight" size={16} />
-                        </button>
+                        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+                            <input
+                                className="input"
+                                placeholder="Sessienaam"
+                                value={sessionName}
+                                maxLength={255}
+                                onChange={(e) => setSessionName(e.target.value)}
+                            />
+                            <input
+                                className="input"
+                                placeholder="Jouw naam"
+                                value={hostName}
+                                maxLength={50}
+                                onChange={(e) => setHostName(e.target.value)}
+                            />
+                            <button
+                                className="btn btn-primary"
+                                onClick={onStart}
+                                disabled={submitting}
+                            >
+                                {submitting ? 'Bezig…' : 'Start sessie'}{' '}
+                                <Icon name="chevronRight" size={16} />
+                            </button>
+                        </div>
                     </div>
                     <ol className="pending-list">
                         {stories.map((s, i) => (
-                            <li key={s.key}>
-                                <span className="pending-key">{s.key}</span>
-                                <span className="pending-title">{s.title}</span>
-                                {s.estimate != null && (
-                                    <span className="story-est has">
-                                        {s.estimate}
-                                    </span>
+                            <li key={`${s.key ?? ''}-${i}`}>
+                                {s.key && (
+                                    <span className="pending-key">{s.key}</span>
                                 )}
+                                <span className="pending-title">{s.title}</span>
                                 <button
                                     className="row-remove"
                                     onClick={() => onRemove(i)}
@@ -1368,14 +1577,11 @@ function SetupView({
     );
 }
 
-function CompleteView({
-    stories,
-    onRestart,
-}: {
-    stories: Story[];
-    onRestart: () => void;
-}) {
-    const total = stories.reduce((a, s) => a + (s.estimate || 0), 0);
+function CompleteView({ stories }: { stories: RoomStory[] }) {
+    const total = stories.reduce(
+        (a, s) => a + (Number(s.final_estimate) || 0),
+        0,
+    );
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
         if (ref.current) {
@@ -1398,23 +1604,20 @@ function CompleteView({
             </p>
             <div className="complete-list">
                 {stories.map((s) => (
-                    <div className="complete-row" key={s.key}>
-                        <span className="story-key">{s.key}</span>
+                    <div className="complete-row" key={s.id}>
+                        {s.key && <span className="story-key">{s.key}</span>}
                         <span className="complete-title">{s.title}</span>
                         <span className="story-est has">
-                            {s.estimate ?? '—'}
+                            {s.final_estimate ?? '—'}
                         </span>
                     </div>
                 ))}
             </div>
-            <div
-                className="complete-actions"
-                style={{ display: 'flex', gap: 9 }}
-            >
-                <button className="btn btn-outline">
-                    <Icon name="upload" size={14} /> Exporteer CSV
-                </button>
-                <button className="btn btn-primary" onClick={onRestart}>
+            <div className="complete-actions" style={{ display: 'flex', gap: 9 }}>
+                <button
+                    className="btn btn-primary"
+                    onClick={() => router.visit('/')}
+                >
                     Nieuwe sessie
                 </button>
             </div>
@@ -1422,7 +1625,13 @@ function CompleteView({
     );
 }
 
-function InviteModal({ onClose }: { onClose: () => void }) {
+function InviteModal({
+    inviteUrl,
+    onClose,
+}: {
+    inviteUrl: string;
+    onClose: () => void;
+}) {
     const [copied, setCopied] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -1435,31 +1644,27 @@ function InviteModal({ onClose }: { onClose: () => void }) {
         }
     }, []);
 
+    const copy = () => {
+        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+            navigator.clipboard.writeText(inviteUrl).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1600);
+            });
+        }
+    };
+
     return (
         <div className="modal-backdrop" onClick={onClose}>
-            <div
-                className="modal"
-                ref={ref}
-                onClick={(e) => e.stopPropagation()}
-            >
+            <div className="modal" ref={ref} onClick={(e) => e.stopPropagation()}>
                 <h2>Spelers uitnodigen</h2>
                 <div className="sub">
                     Iedereen met de link kan stemmen. Geen account nodig.
                 </div>
                 <div className="link-row">
-                    <input
-                        className="input"
-                        readOnly
-                        value="poker.app/r/sprint-42-grooming"
-                    />
+                    <input className="input" readOnly value={inviteUrl} />
                     <button
-                        className={
-                            'btn ' + (copied ? 'btn-secondary' : 'btn-primary')
-                        }
-                        onClick={() => {
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 1600);
-                        }}
+                        className={'btn ' + (copied ? 'btn-secondary' : 'btn-primary')}
+                        onClick={copy}
                     >
                         {copied ? (
                             <>
@@ -1472,17 +1677,6 @@ function InviteModal({ onClose }: { onClose: () => void }) {
                         )}
                     </button>
                 </div>
-                <div className="share-row">
-                    <button className="btn btn-outline">
-                        <Icon name="mail" size={15} /> E-mail
-                    </button>
-                    <button className="btn btn-outline">
-                        <Icon name="link" size={15} /> Slack
-                    </button>
-                    <button className="btn btn-outline">
-                        <Icon name="qr" size={15} /> QR
-                    </button>
-                </div>
                 <button
                     className="btn btn-secondary"
                     style={{ width: '100%', marginTop: 16 }}
@@ -1490,6 +1684,84 @@ function InviteModal({ onClose }: { onClose: () => void }) {
                 >
                     Sluiten
                 </button>
+            </div>
+        </div>
+    );
+}
+
+function ManageStoriesModal({
+    code,
+    onClose,
+}: {
+    code: string;
+    onClose: () => void;
+}) {
+    const [draft, setDraft] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (ref.current) {
+            mAnimate(
+                ref.current,
+                { opacity: [0, 1], y: [12, 0], scale: [0.97, 1] },
+                { duration: 0.25, ease: EASE },
+            );
+        }
+    }, []);
+
+    const submit = () => {
+        const stories = draft
+            .split(/\n/)
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((title) => ({ title }));
+
+        if (!stories.length || submitting) {
+            return;
+        }
+
+        setSubmitting(true);
+        router.post(
+            storeStoriesAction(code).url,
+            { stories },
+            {
+                preserveScroll: true,
+                only: ['room'],
+                onSuccess: () => onClose(),
+                onFinish: () => setSubmitting(false),
+            },
+        );
+    };
+
+    return (
+        <div className="modal-backdrop" onClick={onClose}>
+            <div className="modal" ref={ref} onClick={(e) => e.stopPropagation()}>
+                <h2>Items toevoegen</h2>
+                <div className="sub">Eén item per regel.</div>
+                <textarea
+                    className="textarea"
+                    placeholder={'Login flow vernieuwen\nDashboard audit'}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    style={{ minHeight: 140 }}
+                />
+                <div style={{ display: 'flex', gap: 9, marginTop: 16 }}>
+                    <button
+                        className="btn btn-secondary"
+                        style={{ flex: 1 }}
+                        onClick={onClose}
+                    >
+                        Annuleren
+                    </button>
+                    <button
+                        className="btn btn-primary"
+                        style={{ flex: 1 }}
+                        onClick={submit}
+                        disabled={!draft.trim() || submitting}
+                    >
+                        <Icon name="plus" size={14} /> Toevoegen
+                    </button>
+                </div>
             </div>
         </div>
     );
