@@ -11,8 +11,10 @@ const THEMES = {
     dark: {
         bg: 0x0b0b0d,
         floor: 0x0c0c0f,
-        table: 0x202128,
-        felt: 0x14203c,
+        table: 0x2a1d12,     // dark walnut rim
+        rail: 0x17100a,      // padded leather armrest
+        felt: 0x0f5132,      // casino emerald
+        feltLine: '#d8cfb0', // betting line
         rim: 0x2f7bf6,
         cardBody: 0x2a2a30,
         paper: '#f4f4f5',
@@ -26,8 +28,10 @@ const THEMES = {
     light: {
         bg: 0xf4f4f5,
         floor: 0xe7e5e4,
-        table: 0xd6d3d1,
-        felt: 0xe7e5e4,
+        table: 0xb08968,     // light oak rim
+        rail: 0x5b3f2a,      // tan leather armrest
+        felt: 0x15803d,      // vivid green
+        feltLine: '#f6f4e8', // betting line
         rim: 0x2563eb,
         cardBody: 0xffffff,
         paper: '#ffffff',
@@ -176,17 +180,43 @@ export class PokerScene {
         this.feltMat = feltMat;
         this.tableGroup.add(felt);
 
-        // Accent rim — thin extruded outline ring
-        const ringMat = new THREE.MeshStandardMaterial({ color: t.rim, roughness: 0.4, metalness: 0.2, emissive: t.rim, emissiveIntensity: 0.45 });
-        const ringShape = roundedRectShape(13.1, 7.3, 2.6);
-        const ringHole = roundedRectShape(12.6, 6.8, 2.4);
-        ringShape.holes.push(ringHole);
+        // Betting line — printed cream "racetrack" oval on the felt
+        const lineMat = new THREE.MeshStandardMaterial({ color: t.feltLine, roughness: 0.9, metalness: 0 });
+        const lineShape = roundedRectShape(9.6, 5.0, 2.0);
+        lineShape.holes.push(roundedRectShape(9.4, 4.82, 1.92));
+        const lineGeo = new THREE.ShapeGeometry(lineShape);
+        lineGeo.rotateX(-Math.PI / 2);
+        const line = new THREE.Mesh(lineGeo, lineMat);
+        line.position.y = 0.322;
+        this.lineMat = lineMat;
+        this.tableGroup.add(line);
+
+        // Accent piping — thin emissive LED line at the felt/rail seam
+        const ringMat = new THREE.MeshStandardMaterial({ color: t.rim, roughness: 0.4, metalness: 0.2, emissive: t.rim, emissiveIntensity: 0.4 });
+        const ringShape = roundedRectShape(12.8, 7.0, 2.46);
+        ringShape.holes.push(roundedRectShape(12.55, 6.75, 2.38));
         const ringGeo = new THREE.ShapeGeometry(ringShape);
         ringGeo.rotateX(-Math.PI / 2);
         const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.position.y = 0.315;
+        ring.position.y = 0.325;
         this.ringMat = ringMat;
         this.tableGroup.add(ring);
+
+        // Padded leather rail — raised armrest bumper hugging the felt
+        const railOuter = roundedRectShape(14.3, 8.2, 2.9);
+        railOuter.holes.push(roundedRectShape(12.55, 6.75, 2.38));
+        const railGeo = new THREE.ExtrudeGeometry(railOuter, {
+            depth: 0.34, bevelEnabled: true, bevelThickness: 0.18, bevelSize: 0.22, bevelSegments: 4, steps: 1,
+        });
+        railGeo.center();
+        railGeo.rotateX(-Math.PI / 2);
+        const leatherTex = this._leatherTexture();
+        const railMat = new THREE.MeshStandardMaterial({ color: t.rail, roughness: 0.5, metalness: 0.06, map: leatherTex.map, bumpMap: leatherTex.bump, bumpScale: 0.5 });
+        const rail = new THREE.Mesh(railGeo, railMat);
+        rail.position.y = 0.30;
+        rail.castShadow = true; rail.receiveShadow = true;
+        this.railMat = railMat;
+        this.tableGroup.add(rail);
     }
 
     // give a ShapeGeometry planar UVs normalized over its XZ bounds
@@ -268,6 +298,40 @@ export class PokerScene {
         return { map: this._mkTex(map, 1), bump: this._mkBump(bump, 1) };
     }
 
+    // Padded leather: mottled grain blobs + fine speckle; paired bump
+    _leatherTexture() {
+        const t = this.theme;
+        const S = 512;
+        const map = document.createElement('canvas'); map.width = map.height = S;
+        const bump = document.createElement('canvas'); bump.width = bump.height = S;
+        const mg = map.getContext('2d'), bg = bump.getContext('2d');
+        const base = hexToRgb(t.rail);
+        mg.fillStyle = rgbStr(base); mg.fillRect(0, 0, S, S);
+        bg.fillStyle = '#808080'; bg.fillRect(0, 0, S, S);
+        // soft mottling for a grained-leather look
+        for (let i = 0; i < 260; i++) {
+            const x = Math.random() * S, y = Math.random() * S, r = 6 + Math.random() * 24;
+            const sh = (Math.random() - 0.5) * 28;
+            mg.globalAlpha = 0.16; mg.fillStyle = rgbStr(shade(base, sh));
+            mg.beginPath(); mg.arc(x, y, r, 0, Math.PI * 2); mg.fill();
+            const bv = clamp8(128 + sh);
+            bg.globalAlpha = 0.18; bg.fillStyle = `rgb(${bv},${bv},${bv})`;
+            bg.beginPath(); bg.arc(x, y, r, 0, Math.PI * 2); bg.fill();
+        }
+        mg.globalAlpha = bg.globalAlpha = 1;
+        // fine pore speckle
+        const img = mg.getImageData(0, 0, S, S), d = img.data;
+        const bimg = bg.getImageData(0, 0, S, S), bd = bimg.data;
+        for (let i = 0; i < d.length; i += 4) {
+            const n = (Math.random() - 0.5) * 16;
+            d[i] = clamp8(d[i] + n); d[i + 1] = clamp8(d[i + 1] + n); d[i + 2] = clamp8(d[i + 2] + n);
+            const bn = (Math.random() - 0.5) * 44;
+            bd[i] = clamp8(bd[i] + bn); bd[i + 1] = clamp8(bd[i + 1] + bn); bd[i + 2] = clamp8(bd[i + 2] + bn);
+        }
+        mg.putImageData(img, 0, 0); bg.putImageData(bimg, 0, 0);
+        return { map: this._mkTex(map, 6), bump: this._mkBump(bump, 6) };
+    }
+
     // Floor: coarse value-noise concrete
     _floorTexture() {
         const t = this.theme;
@@ -294,6 +358,8 @@ export class PokerScene {
         this.feltMat.map = feltTex.map; this.feltMat.bumpMap = feltTex.bump; this.feltMat.needsUpdate = true;
         const woodTex = this._woodTexture();
         this.tableMat.map = woodTex.map; this.tableMat.bumpMap = woodTex.bump; this.tableMat.needsUpdate = true;
+        const leatherTex = this._leatherTexture();
+        this.railMat.map = leatherTex.map; this.railMat.bumpMap = leatherTex.bump; this.railMat.needsUpdate = true;
         const floorTex = this._floorTexture();
         this.floorMat.map = floorTex.map; this.floorMat.bumpMap = floorTex.bump; this.floorMat.needsUpdate = true;
     }
@@ -499,7 +565,9 @@ export class PokerScene {
         this.scene.fog.color = new THREE.Color(t.bg);
         this.floor.material.color = new THREE.Color(t.floor);
         this.tableMat.color = new THREE.Color(t.table);
+        this.railMat.color = new THREE.Color(t.rail);
         this.feltMat.color = new THREE.Color(t.felt);
+        this.lineMat.color = new THREE.Color(t.feltLine);
         this.ringMat.color = new THREE.Color(t.rim);
         this.ringMat.emissive = new THREE.Color(t.rim);
         this.hemi.color = new THREE.Color(t.hemiSky); this.hemi.groundColor = new THREE.Color(t.hemiGround); this.hemi.intensity = t.hemiInt;
