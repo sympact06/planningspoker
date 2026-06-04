@@ -8,6 +8,6 @@ test('guests can open the landing page without logging in', function () {
     $response
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
-            ->component('welcome')
+            ->component('poker')
         );
 });
