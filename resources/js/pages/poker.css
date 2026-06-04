@@ -503,3 +503,56 @@
 .pp3d ::-webkit-scrollbar { width: 10px; height: 10px; }
 .pp3d ::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.3); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
 .pp3d ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); background-clip: padding-box; }
+
+/* ---- Join screen (anonymous invite) ---- */
+.pp3d .join-screen {
+    position: absolute; inset: 0; overflow-y: auto;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 28px; padding: 40px 24px;
+    background:
+        radial-gradient(1200px 600px at 50% -10%, hsl(var(--primary) / 0.14), transparent 60%),
+        hsl(var(--background));
+}
+.pp3d .join-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+.pp3d .join-brand .brand-mark {
+    width: 32px; height: 32px; border-radius: 9px;
+    background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+    display: grid; place-items: center;
+}
+.pp3d .join-card {
+    width: min(420px, 100%);
+    background: hsl(var(--card) / 0.85);
+    border: 1px solid hsl(var(--border));
+    border-radius: calc(var(--radius) + 4px);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(16px);
+    padding: 32px 30px;
+    display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px;
+}
+.pp3d .join-title { margin: 4px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.pp3d .join-sub { margin: 0; font-size: 14px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.pp3d .join-avatars { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px; }
+.pp3d .join-avatars .avatar-stack .avatar { box-shadow: 0 0 0 2px hsl(var(--card)); }
+.pp3d .join-avatars span { font-size: 12.5px; color: hsl(var(--muted-foreground)); }
+
+/* ---- Labelled name fields (join + create) ---- */
+.pp3d .name-field { display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left; }
+.pp3d .field-label { font-size: 12px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.01em; }
+.pp3d .name-input {
+    width: 100%; height: 44px; padding: 0 14px; border-radius: calc(var(--radius) - 1px);
+    background: hsl(var(--background)); border: 1px solid hsl(var(--input));
+    font-size: 15px; font-family: var(--font); color: hsl(var(--foreground)); outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pp3d .name-input::placeholder { color: hsl(var(--muted-foreground) / 0.7); }
+.pp3d .name-input:focus { border-color: hsl(var(--primary)); box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15); }
+.pp3d .join-submit { width: 100%; margin-top: 4px; }
+
+/* ---- Create-room "who are you" start panel ---- */
+.pp3d .start-panel {
+    border-top: 1px solid hsl(var(--border)); margin-top: 4px; padding-top: 18px;
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px;
+}
+.pp3d .start-panel .name-field { flex: 1 1 180px; }
+.pp3d .start-panel .btn { height: 44px; flex: 0 0 auto; }
+.pp3d .start-hint { width: 100%; margin: 0 0 2px; font-size: 13px; font-weight: 600; color: hsl(var(--foreground)); }

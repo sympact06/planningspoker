@@ -8,7 +8,7 @@
 //   3. room with `me`        → the real, Reverb-backed session
 // ============================================================
 import { Head, router } from '@inertiajs/react';
-import { useEchoPresence } from '@laravel/echo-react';
+import { useConnectionStatus, useEchoPresence } from '@laravel/echo-react';
 import { animate, stagger } from 'motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -228,7 +228,7 @@ function CreateRoomView() {
 
 /* ─── Join gate ─── */
 function JoinRoomView({ room }: { room: RoomData }) {
-    const [theme, setTheme] = useTheme();
+    const [theme] = useTheme();
     const [name, setName] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
@@ -259,42 +259,65 @@ function JoinRoomView({ room }: { room: RoomData }) {
     return (
         <div className="pp3d" data-theme={theme}>
             <Head title={`Meedoen · ${room.name}`} />
-            <div className="app">
-                <Topbar theme={theme} setTheme={setTheme} phase="setup" />
-                <main className="stage" style={{ gridColumn: '1 / -1' }}>
-                    <div className="setup">
-                        <div className="intro-card" ref={ref} style={{ margin: 'auto' }}>
-                            <span className="badge primary">Je bent uitgenodigd</span>
-                            <h1 className="intro-title">{room.name}</h1>
-                            <p style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                {room.players.length} aan tafel · geen account nodig
-                            </p>
-                            <div className="intro-divider"></div>
-                            <input
-                                className="input"
-                                placeholder="Vul je naam in"
-                                value={name}
-                                maxLength={50}
-                                autoFocus
-                                onChange={(e) => setName(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        submit();
-                                    }
-                                }}
-                            />
-                            <button
-                                className="btn btn-primary btn-lg"
-                                onClick={submit}
-                                disabled={!name.trim() || submitting}
-                                style={{ width: '100%' }}
-                            >
-                                {submitting ? 'Bezig…' : 'Deelnemen'}{' '}
-                                <Icon name="chevronRight" size={16} />
-                            </button>
-                        </div>
+            <div className="join-screen">
+                <div className="join-brand">
+                    <div className="brand-mark">
+                        <Icon name="cube" size={18} />
                     </div>
-                </main>
+                    Planning Poker
+                </div>
+                <div className="join-card" ref={ref}>
+                    <span className="badge primary">Je bent uitgenodigd</span>
+                    <h1 className="join-title">{room.name}</h1>
+                    <p className="join-sub">
+                        Doe mee met de schatting — geen account nodig.
+                    </p>
+
+                    {room.players.length > 0 && (
+                        <div className="join-avatars">
+                            <div className="avatar-stack">
+                                {room.players.slice(0, 4).map((p) => (
+                                    <div
+                                        className="avatar xs"
+                                        key={p.id}
+                                        style={{ background: p.color }}
+                                    >
+                                        {p.name[0]}
+                                    </div>
+                                ))}
+                            </div>
+                            <span>
+                                {room.players.length} al aan tafel
+                            </span>
+                        </div>
+                    )}
+
+                    <label className="name-field">
+                        <span className="field-label">Jouw naam</span>
+                        <input
+                            className="name-input"
+                            placeholder="bv. Sanne"
+                            value={name}
+                            maxLength={50}
+                            autoFocus
+                            onChange={(e) => setName(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    submit();
+                                }
+                            }}
+                        />
+                    </label>
+
+                    <button
+                        className="btn btn-primary btn-lg join-submit"
+                        onClick={submit}
+                        disabled={!name.trim() || submitting}
+                    >
+                        {submitting ? 'Bezig…' : 'Deelnemen aan de sessie'}{' '}
+                        <Icon name="chevronRight" size={16} />
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -377,6 +400,22 @@ function RoomSession({ room, me }: { room: RoomData; me: RoomMe }) {
             });
         });
     }, [channel, room.code]);
+
+    // Fallback: while the websocket isn't connected (e.g. Reverb unreachable on
+    // a host without wss), poll the room so joins/votes still surface without a
+    // manual refresh. Instant broadcasts take over once Echo connects.
+    const connectionStatus = useConnectionStatus();
+    useEffect(() => {
+        if (connectionStatus === 'connected') {
+            return;
+        }
+
+        const id = setInterval(() => {
+            router.reload({ only: ['room'] });
+        }, 4000);
+
+        return () => clearInterval(id);
+    }, [connectionStatus]);
 
     // ---- scene votes (face-down during voting, real on reveal) ----
     const sceneVotes = useMemo<Record<number, string>>(() => {
@@ -1543,30 +1582,6 @@ function SetupView({
                             {stories.length}{' '}
                             {stories.length === 1 ? 'item' : 'items'} klaar
                         </h3>
-                        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-                            <input
-                                className="input"
-                                placeholder="Sessienaam"
-                                value={sessionName}
-                                maxLength={255}
-                                onChange={(e) => setSessionName(e.target.value)}
-                            />
-                            <input
-                                className="input"
-                                placeholder="Jouw naam"
-                                value={hostName}
-                                maxLength={50}
-                                onChange={(e) => setHostName(e.target.value)}
-                            />
-                            <button
-                                className="btn btn-primary"
-                                onClick={onStart}
-                                disabled={submitting}
-                            >
-                                {submitting ? 'Bezig…' : 'Start sessie'}{' '}
-                                <Icon name="chevronRight" size={16} />
-                            </button>
-                        </div>
                     </div>
                     <ol className="pending-list">
                         {stories.map((s, i) => (
@@ -1585,6 +1600,42 @@ function SetupView({
                             </li>
                         ))}
                     </ol>
+
+                    <div className="start-panel">
+                        <p className="start-hint">
+                            Nog één stap — wie ben jij?
+                        </p>
+                        <label className="name-field">
+                            <span className="field-label">Jouw naam (host)</span>
+                            <input
+                                className="name-input"
+                                placeholder="bv. Olivier"
+                                value={hostName}
+                                maxLength={50}
+                                onChange={(e) => setHostName(e.target.value)}
+                            />
+                        </label>
+                        <label className="name-field">
+                            <span className="field-label">
+                                Sessienaam (optioneel)
+                            </span>
+                            <input
+                                className="name-input"
+                                placeholder="bv. Sprint 42"
+                                value={sessionName}
+                                maxLength={255}
+                                onChange={(e) => setSessionName(e.target.value)}
+                            />
+                        </label>
+                        <button
+                            className="btn btn-primary"
+                            onClick={onStart}
+                            disabled={submitting}
+                        >
+                            {submitting ? 'Bezig…' : 'Start sessie'}{' '}
+                            <Icon name="chevronRight" size={16} />
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
